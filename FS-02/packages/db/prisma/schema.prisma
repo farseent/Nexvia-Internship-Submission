@@ -1,0 +1,299 @@
+// CoNote Prisma schema.
+// Phase 2: User and Session. Phase 3: workspaces, members, invitations, pages,
+// page permissions and the activity log. Phase 4: PageContent (interim, D54) and Asset.
+// Later phases add their models together with the code that uses them; the full design
+// is in docs/DATABASE_SCHEMA.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────── Enums ─────────────
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  COMMENTER
+  VIEWER
+}
+
+enum PageAccessRole {
+  NONE
+  VIEWER
+  COMMENTER
+  EDITOR
+}
+
+// DECLINED is added by Phase 3 (the invitee may decline, see DECISIONS D48).
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+}
+
+// Phase 4: AVATAR is part of the data model but no avatar upload exists yet (D55).
+enum AssetPurpose {
+  PAGE_IMAGE
+  AVATAR
+}
+
+enum AssetStatus {
+  PENDING
+  READY
+}
+
+// ───────────── Identity ─────────────
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique @db.VarChar(254)
+  passwordHash      String
+  displayName       String    @db.VarChar(80)
+  presenceColor     String    @db.Char(7)
+  passwordChangedAt DateTime  @default(now()) @db.Timestamptz(6)
+  lastLoginAt       DateTime? @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  sessions Session[]
+
+  workspacesCreated   Workspace[]       @relation("WorkspaceCreatedBy")
+  memberships         WorkspaceMember[]
+  invitationsSent     Invitation[]      @relation("InvitationInvitedBy")
+  invitationsAccepted Invitation[]      @relation("InvitationAcceptedBy")
+  pagesCreated        Page[]            @relation("PageCreatedBy")
+  pagesDeleted        Page[]            @relation("PageDeletedBy")
+  pagePermissions     PagePermission[]  @relation("PermissionUser")
+  permissionsGranted  PagePermission[]  @relation("PermissionCreatedBy")
+  activity            ActivityLog[]     @relation("ActivityActor")
+  pageContentsEdited  PageContent[]     @relation("PageContentUpdatedBy")
+  assetsUploaded      Asset[]           @relation("AssetUploadedBy")
+
+  @@map("users")
+}
+
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @db.Uuid
+  tokenHash         String    @unique @db.Char(64)
+  userAgent         String?   @db.VarChar(512)
+  ipAddress         String?   @db.VarChar(45)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  lastSeenAt        DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt         DateTime  @db.Timestamptz(6) // idle expiry (sliding)
+  absoluteExpiresAt DateTime  @db.Timestamptz(6) // fixed maximum lifetime
+  revokedAt         DateTime? @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ───────────── Workspaces ─────────────
+
+model Workspace {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(100)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  createdBy    User?             @relation("WorkspaceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  members      WorkspaceMember[]
+  invitations  Invitation[]
+  pages        Page[]
+  activityLogs ActivityLog[]
+  assets       Asset[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @db.Uuid
+  userId      String        @db.Uuid
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model Invitation {
+  id           String           @id @default(uuid()) @db.Uuid
+  workspaceId  String           @db.Uuid
+  email        String           @db.VarChar(254)
+  role         WorkspaceRole
+  tokenHash    String           @unique @db.Char(64)
+  status       InvitationStatus @default(PENDING)
+  invitedById  String?          @db.Uuid
+  acceptedById String?          @db.Uuid
+  expiresAt    DateTime         @db.Timestamptz(6)
+  acceptedAt   DateTime?        @db.Timestamptz(6)
+  revokedAt    DateTime?        @db.Timestamptz(6)
+  createdAt    DateTime         @default(now()) @db.Timestamptz(6)
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy  User?     @relation("InvitationInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  acceptedBy User?     @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+  @@index([email])
+  @@map("invitations")
+}
+
+// ───────────── Pages ─────────────
+
+model Page {
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @db.Uuid
+  parentId      String?   @db.Uuid
+  title         String    @default("Untitled") @db.VarChar(200)
+  icon          String?   @db.VarChar(32)
+  position      String    @db.VarChar(64) // fractional-index key; compare with code-unit order, not a DB collation
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime? @db.Timestamptz(6)
+  deletedById   String?   @db.Uuid
+  deleteBatchId String?   @db.Uuid // identifies the subtree deletion operation
+
+  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // Composite reference: a parent must be in the same workspace (DATABASE_SCHEMA §5).
+  parent       Page?            @relation("PageTree", fields: [workspaceId, parentId], references: [workspaceId, id], onDelete: Cascade)
+  children     Page[]           @relation("PageTree")
+  createdBy    User?            @relation("PageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy    User?            @relation("PageDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  permissions  PagePermission[]
+  activityLogs ActivityLog[]
+  content      PageContent?
+  assets       Asset[]
+  state        DocumentState?
+  updates      DocumentUpdate[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, parentId, position])
+  @@index([workspaceId, deletedAt])
+  @@index([deleteBatchId])
+  @@map("pages")
+}
+
+model PagePermission {
+  id          String         @id @default(uuid()) @db.Uuid
+  pageId      String         @db.Uuid
+  userId      String         @db.Uuid
+  role        PageAccessRole
+  createdById String?        @db.Uuid
+  createdAt   DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
+
+  page      Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user      User  @relation("PermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("PermissionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([pageId, userId])
+  @@index([userId])
+  @@map("page_permissions")
+}
+
+// ───────────── Activity ─────────────
+
+model ActivityLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  pageId      String?  @db.Uuid
+  actorId     String?  @db.Uuid
+  action      String   @db.VarChar(64) // dot-notation catalog, see DATABASE_SCHEMA §6
+  metadata    Json? // ids and non-sensitive context only
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page      Page?     @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  actor     User?     @relation("ActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([pageId, createdAt(sort: Desc)])
+  @@index([actorId])
+  @@map("activity_logs")
+}
+
+// ───────────── Phase 4: editor content (interim) and assets ─────────────
+
+// Interim persistence of editor content as ProseMirror JSON (D54). Phase 6 replaces it with
+// the Yjs document store and removes this table.
+model PageContent {
+  pageId        String   @id @db.Uuid
+  schemaVersion Int // EDITOR_SCHEMA_VERSION at the time of the last save
+  content       Json // validated by `validateEditorDocument` before every write
+  revision      Int // 1 for the first save, +1 per save; compare-and-set token for autosave
+  updatedById   String?  @db.Uuid
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  page      Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  updatedBy User? @relation("PageContentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("page_contents")
+}
+
+model Asset {
+  id           String       @id @default(uuid()) @db.Uuid
+  workspaceId  String?      @db.Uuid // null for avatars (not implemented yet)
+  pageId       String?      @db.Uuid // set to null when the page is purged; the cleanup job removes the asset
+  uploadedById String?      @db.Uuid
+  purpose      AssetPurpose
+  status       AssetStatus  @default(PENDING)
+  objectKey    String       @unique @db.VarChar(512) // generated by the server, never from client input
+  contentType  String       @db.VarChar(127)
+  sizeBytes    Int
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+
+  workspace  Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page       Page?      @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  uploadedBy User?      @relation("AssetUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([pageId])
+  @@index([status, createdAt])
+  @@map("assets")
+}
+
+// ───────────── Collaborative document persistence (D15, Phase 5) ─────────────
+
+model DocumentState {
+  pageId               String   @id @db.Uuid
+  foldedState          Bytes // compacted full Yjs state (updates up to foldedSeq merged in)
+  persistedStateVector Bytes // per-client maximum of everything stored: foldedState plus all DocumentUpdate rows
+  persistedDigest      Bytes // coverage (state vector + delete set) of the document at its last store; only decides whether a store is a no-op
+  foldedSeq            BigInt   @default(0) // highest DocumentUpdate.seq merged into foldedState
+  updatedAt            DateTime @updatedAt @db.Timestamptz(6)
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@map("document_states")
+}
+
+model DocumentUpdate {
+  seq       BigInt   @id @default(autoincrement())
+  pageId    String   @db.Uuid
+  update    Bytes // incremental Yjs update (diff), never the full document per edit
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, seq])
+  @@map("document_updates")
+}

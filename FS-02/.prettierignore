@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+coverage
+pnpm-lock.yaml
+packages/db/src/generated
+docs
+README.md
+CLAUDE.md
+apps/web/next-env.d.ts
+spikes/**

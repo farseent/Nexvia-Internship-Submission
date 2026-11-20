@@ -1,0 +1,21 @@
+node_modules/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# Environment files (only *.example files are committed)
+.env
+.env.*
+!.env.example
+
+# Uploaded images of the local-disk storage adapter
+.data/
+
+# Generated Prisma client
+packages/db/src/generated/
+
+# Logs and OS files
+*.log
+.DS_Store

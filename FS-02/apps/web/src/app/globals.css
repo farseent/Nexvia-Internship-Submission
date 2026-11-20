@@ -1,0 +1,163 @@
+@import 'tailwindcss';
+
+/* ───────────── Rich-text editor (Phase 4) ───────────── */
+.conote-prose {
+  outline: none;
+  min-height: 12rem;
+  padding: 0.25rem 0.125rem 4rem;
+  color: #0f172a;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.conote-editor[data-editable='true'] .conote-prose:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 4px;
+  border-radius: 0.25rem;
+}
+.conote-prose > * + * {
+  margin-top: 0.75rem;
+}
+.conote-prose h1 {
+  font-size: 1.875rem;
+  line-height: 1.25;
+  font-weight: 700;
+  margin-top: 1.5rem;
+}
+.conote-prose h2 {
+  font-size: 1.5rem;
+  line-height: 1.3;
+  font-weight: 650;
+  margin-top: 1.25rem;
+}
+.conote-prose h3 {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 1rem;
+}
+.conote-prose a {
+  color: #4338ca;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.conote-prose ul:not([data-type='taskList']) {
+  list-style: disc;
+  padding-left: 1.5rem;
+}
+.conote-prose ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+.conote-prose li > * + * {
+  margin-top: 0.25rem;
+}
+.conote-prose ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+.conote-prose ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.conote-prose ul[data-type='taskList'] li > label {
+  flex: none;
+  padding-top: 0.35rem;
+  user-select: none;
+}
+.conote-prose ul[data-type='taskList'] li > label input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #4f46e5;
+}
+.conote-prose ul[data-type='taskList'] li > div {
+  flex: 1;
+  min-width: 0;
+}
+.conote-prose ul[data-type='taskList'] li[data-checked='true'] > div {
+  color: #64748b;
+  text-decoration: line-through;
+}
+.conote-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+}
+.conote-prose img.ProseMirror-selectednode {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+/* Wide tables scroll inside their own box so the page never scrolls sideways. */
+.conote-prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.conote-prose th,
+.conote-prose td {
+  min-width: 6rem;
+  border: 1px solid #cbd5e1;
+  padding: 0.375rem 0.625rem;
+  vertical-align: top;
+  position: relative;
+}
+.conote-prose th {
+  background: #f1f5f9;
+  font-weight: 600;
+  text-align: left;
+}
+.conote-prose td > * + *,
+.conote-prose th > * + * {
+  margin-top: 0.25rem;
+}
+.conote-prose .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(79, 70, 229, 0.12);
+  pointer-events: none;
+}
+.conote-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #94a3b8;
+  pointer-events: none;
+}
+.conote-editor[data-editable='false'] .conote-prose {
+  min-height: 4rem;
+  padding-bottom: 1rem;
+}
+
+/* Collaborators' carets and selections (Phase 7). Decorations only: never part of the document. */
+.conote-caret {
+  position: relative;
+  display: inline;
+  margin: 0 -1px;
+  border-left: 2px solid var(--conote-caret-color, #64748b);
+  pointer-events: none;
+  user-select: none;
+  word-break: normal;
+}
+.conote-caret__flag {
+  position: absolute;
+  top: -1.35em;
+  left: -2px;
+  padding: 0 0.3rem;
+  border-radius: 0.25rem 0.25rem 0.25rem 0;
+  background: var(--conote-caret-color, #64748b);
+  color: var(--conote-caret-text, #fff);
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+.conote-selection {
+  pointer-events: none;
+}

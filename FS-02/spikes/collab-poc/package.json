@@ -1,0 +1,33 @@
+{
+  "name": "conote-collab-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Disposable Phase 1b real-time collaboration experiments",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "server": "tsx src/server.ts",
+    "spike": "tsx src/run.ts",
+    "spike:check": "tsx src/check-environment.ts"
+  },
+  "dependencies": {
+    "@hocuspocus/extension-redis": "4.8.0",
+    "@hocuspocus/provider": "4.8.0",
+    "@hocuspocus/server": "4.8.0",
+    "ioredis": "5.6.1",
+    "pg": "8.23.1",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,49 @@
+
+# syntax=docker/dockerfile:1
+# Targets: migrate, api, collab. Build context: repository root.
+
+FROM node:24-slim AS base
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
+ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
+RUN npm install -g pnpm@12.18.0
+WORKDIR /repo
+
+FROM base AS build
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/api ./apps/api
+COPY apps/collab ./apps/collab
+COPY apps/web/package.json ./apps/web/package.json
+RUN pnpm install --frozen-lockfile
+RUN pnpm run build:packages && pnpm --filter @conote/api --filter @conote/collab run build
+RUN pnpm --filter @conote/api --prod deploy /out/api \
+ && pnpm --filter @conote/collab --prod deploy /out/collab
+
+# Runs prisma migrate deploy once.
+FROM build AS migrate
+WORKDIR /repo/packages/db
+CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
+
+# Runtime base with OpenSSL for Prisma.
+FROM node:24-slim AS runtime
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM runtime AS api
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/api ./
+USER node
+EXPOSE 4000
+CMD ["node", "dist/main.js"]
+
+FROM runtime AS collab
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/collab ./
+USER node
+EXPOSE 4100
+CMD ["node", "dist/main.js"]

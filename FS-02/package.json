@@ -1,0 +1,51 @@
+{
+  "name": "conote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CoNote – real-time collaborative workspace (monorepo root)",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "pnpm": ">=12.18.0"
+  },
+  "scripts": {
+    "bootstrap": "bash scripts/setup.sh",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d --wait",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "infra:reset": "docker compose -f infra/docker-compose.yml down -v",
+    "build:packages": "pnpm --filter \"./packages/*\" run build",
+    "build": "pnpm run build:packages && pnpm --filter \"./apps/*\" run build",
+    "collab:keys": "node scripts/generate-collab-keys.mjs",
+    "dev:api": "pnpm --filter @conote/api run dev",
+    "dev:collab": "pnpm --filter @conote/collab run dev",
+    "dev:web": "pnpm --filter @conote/web run dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm run build:packages && pnpm -r --parallel run typecheck && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build:packages && node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run",
+    "test:unit": "pnpm run build:packages && node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --project unit",
+    "test:integration": "pnpm run build:packages && node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --project integration",
+    "db:generate": "pnpm --filter @conote/db run generate",
+    "db:migrate:deploy": "pnpm --filter @conote/db run migrate:deploy",
+    "db:migrate:dev": "pnpm --filter @conote/db run migrate:dev",
+    "db:migrate:status": "pnpm --filter @conote/db run migrate:status",
+    "check": "pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@next/eslint-plugin-next": "16.4.6",
+    "@types/node": "24.19.2",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "pino-pretty": "13.2.0",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2",
+    "vitest": "5.1.0"
+  }
+}

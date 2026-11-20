@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: conote
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: conote
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U conote -d conote"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://conote:ci_password@localhost:5432/conote
+      REDIS_URL: redis://localhost:6379
+      LOG_LEVEL: warn
+      APP_URL: http://localhost:3000
+      API_INTERNAL_URL: http://localhost:4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client and build shared packages
+        run: pnpm run build:packages
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format check
+        run: pnpm run format:check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Apply database migrations
+        run: pnpm run db:migrate:deploy
+
+      - name: Unit tests
+        run: pnpm run test:unit
+        env:
+          NODE_ENV: test
+
+      - name: Integration tests (PostgreSQL + Redis; Linux graceful-shutdown verification)
+        run: pnpm run test:integration
+        env:
+          NODE_ENV: test
+
+      - name: Production build
+        run: pnpm run build
+        env:
+          NODE_ENV: production

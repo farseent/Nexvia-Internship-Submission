@@ -29,7 +29,20 @@ export interface CollabState {
   generation: number;
   /** A reason for `denied` / `revoked`, for display. */
   reason: string | null;
+  /** A version restore is running on this page: the editor is held read-only meanwhile (D62). */
+  restoring: boolean;
+  /** Why the last restore failed, until the next one starts. */
+  restoreError: string | null;
+  /** Bumped when the page's threads may have changed (event or reconnect): refetch them (D14). */
+  commentsTick: number;
+  /** Bumped when a version was created or restored: refetch the version list. */
+  versionsTick: number;
 }
+
+export type CommandResult =
+  { ok: true; result: Record<string, unknown> } | { ok: false; code: string; message: string };
+
+const COMMAND_TIMEOUT_MS = 30_000;
 
 export interface CollabSessionOptions {
   pageId: string;
@@ -82,7 +95,15 @@ export class CollabSession {
     unsyncedChanges: false,
     generation: 0,
     reason: null,
+    restoring: false,
+    restoreError: null,
+    commentsTick: 0,
+    versionsTick: 0,
   };
+  private pending = new Map<
+    string,
+    { resolve: (result: CommandResult) => void; timer: ReturnType<typeof setTimeout> }
+  >();
   private listeners = new Set<Listener>();
   private currentDoc: Y.Doc | null = null;
   private currentAwareness: SessionAwareness | null = null;
@@ -132,6 +153,7 @@ export class CollabSession {
 
   destroy(): void {
     this.destroyed = true;
+    this.failPending('The connection was closed.');
     clearTimeout(this.retryTimer);
     this.teardownProvider();
     this.discardDocument();
@@ -205,6 +227,8 @@ export class CollabSession {
         if (this.currentProvider !== provider || this.isTerminal()) return;
         this.attempts = 0;
         this.authAttemptsWithoutSync = 0;
+        // Page events are at-most-once: after (re)connecting, threads are fetched again (D14).
+        this.update({ commentsTick: this.state.commentsTick + 1 });
         // Publish presence again now that the server knows this connection. y-protocols
         // ignores an awareness update whose clock it has not seen advance, and a client's first
         // update has clock 0, so without this a person who has not moved a cursor yet (or who
@@ -304,8 +328,92 @@ export class CollabSession {
         // The socket closes next and the provider reconnects by itself.
         if (!this.isTerminal()) this.update({ phase: 'offline' });
         return;
+      case 'response': {
+        if (message.replyTo !== undefined) {
+          this.settle(message.replyTo, { ok: true, result: message.payload.result ?? {} });
+        }
+        return;
+      }
       case 'error':
-        return; // Phase 6 sends no client commands, so there is nothing to answer.
+        if (message.replyTo !== undefined) {
+          this.settle(message.replyTo, {
+            ok: false,
+            code: message.payload.code,
+            message: message.payload.message,
+          });
+        }
+        return;
+      case 'comments.changed':
+        this.update({ commentsTick: this.state.commentsTick + 1 });
+        return;
+      case 'version.created':
+        this.update({ versionsTick: this.state.versionsTick + 1 });
+        return;
+      case 'version.restore.started':
+        this.update({ restoring: true, restoreError: null });
+        return;
+      case 'version.restored':
+        // The restore arrived as an ordinary update. Anything this client typed while the server
+        // held writes back was refused; syncing sends it again, and it merges (D62).
+        this.update({
+          restoring: false,
+          versionsTick: this.state.versionsTick + 1,
+          commentsTick: this.state.commentsTick + 1,
+        });
+        this.currentProvider?.forceSync();
+        return;
+      case 'version.restore.failed':
+        this.update({ restoring: false, restoreError: message.payload.reason });
+        this.currentProvider?.forceSync();
+        return;
+    }
+  }
+
+  // ───────────── commands (WEBSOCKET_PROTOCOL §7) ─────────────
+
+  /** Save a named version of the page as it is now. Needs the Editor role; the server decides. */
+  createVersion(label?: string): Promise<CommandResult> {
+    return this.command('version.create', label === undefined ? {} : { label });
+  }
+
+  /** Restore a version. The result arrives as an update to the live document, like any edit. */
+  restoreVersion(versionId: string): Promise<CommandResult> {
+    return this.command('version.restore', { versionId });
+  }
+
+  private command(type: string, payload: Record<string, unknown>): Promise<CommandResult> {
+    const provider = this.currentProvider;
+    if (provider === null || this.state.phase !== 'live') {
+      return Promise.resolve({
+        ok: false,
+        code: 'NOT_CONNECTED',
+        message: 'Reconnect to the page and try again.',
+      });
+    }
+    const id = crypto.randomUUID();
+    return new Promise<CommandResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve({ ok: false, code: 'TIMEOUT', message: 'The server did not answer in time.' });
+      }, COMMAND_TIMEOUT_MS);
+      this.pending.set(id, { resolve, timer });
+      provider.sendStateless(JSON.stringify({ v: 1, type, id, payload }));
+    });
+  }
+
+  private settle(id: string, result: CommandResult): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pending.delete(id);
+    entry.resolve(result);
+  }
+
+  private failPending(message: string): void {
+    for (const [id, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.resolve({ ok: false, code: 'NOT_CONNECTED', message });
+      this.pending.delete(id);
     }
   }
 

@@ -49,6 +49,18 @@ enum AssetStatus {
   READY
 }
 
+// Phase 8 (DATABASE_SCHEMA §4.4, §4.5)
+enum SnapshotKind {
+  AUTO
+  MANUAL
+  PRE_RESTORE
+}
+
+enum AnchorStatus {
+  ACTIVE
+  DETACHED
+}
+
 // ───────────── Identity ─────────────
 
 model User {
@@ -64,17 +76,22 @@ model User {
 
   sessions Session[]
 
-  workspacesCreated   Workspace[]       @relation("WorkspaceCreatedBy")
+  workspacesCreated   Workspace[]        @relation("WorkspaceCreatedBy")
   memberships         WorkspaceMember[]
-  invitationsSent     Invitation[]      @relation("InvitationInvitedBy")
-  invitationsAccepted Invitation[]      @relation("InvitationAcceptedBy")
-  pagesCreated        Page[]            @relation("PageCreatedBy")
-  pagesDeleted        Page[]            @relation("PageDeletedBy")
-  pagePermissions     PagePermission[]  @relation("PermissionUser")
-  permissionsGranted  PagePermission[]  @relation("PermissionCreatedBy")
-  activity            ActivityLog[]     @relation("ActivityActor")
-  pageContentsEdited  PageContent[]     @relation("PageContentUpdatedBy")
-  assetsUploaded      Asset[]           @relation("AssetUploadedBy")
+  invitationsSent     Invitation[]       @relation("InvitationInvitedBy")
+  invitationsAccepted Invitation[]       @relation("InvitationAcceptedBy")
+  pagesCreated        Page[]             @relation("PageCreatedBy")
+  pagesDeleted        Page[]             @relation("PageDeletedBy")
+  pagePermissions     PagePermission[]   @relation("PermissionUser")
+  permissionsGranted  PagePermission[]   @relation("PermissionCreatedBy")
+  activity            ActivityLog[]      @relation("ActivityActor")
+  pageContentsEdited  PageContent[]      @relation("PageContentUpdatedBy")
+  assetsUploaded      Asset[]            @relation("AssetUploadedBy")
+  createdThreads      CommentThread[]    @relation("ThreadCreatedBy")
+  resolvedThreads     CommentThread[]    @relation("ThreadResolvedBy")
+  comments            Comment[]          @relation("CommentAuthor")
+  deletedComments     Comment[]          @relation("CommentDeletedBy")
+  createdSnapshots    DocumentSnapshot[] @relation("SnapshotCreatedBy")
 
   @@map("users")
 }
@@ -172,18 +189,20 @@ model Page {
   deletedById   String?   @db.Uuid
   deleteBatchId String?   @db.Uuid // identifies the subtree deletion operation
 
-  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   // Composite reference: a parent must be in the same workspace (DATABASE_SCHEMA §5).
-  parent       Page?            @relation("PageTree", fields: [workspaceId, parentId], references: [workspaceId, id], onDelete: Cascade)
-  children     Page[]           @relation("PageTree")
-  createdBy    User?            @relation("PageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  deletedBy    User?            @relation("PageDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  parent       Page?              @relation("PageTree", fields: [workspaceId, parentId], references: [workspaceId, id], onDelete: Cascade)
+  children     Page[]             @relation("PageTree")
+  createdBy    User?              @relation("PageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy    User?              @relation("PageDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   permissions  PagePermission[]
   activityLogs ActivityLog[]
   content      PageContent?
   assets       Asset[]
   state        DocumentState?
   updates      DocumentUpdate[]
+  snapshots    DocumentSnapshot[]
+  threads      CommentThread[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, parentId, position])
@@ -274,12 +293,16 @@ model Asset {
 // ───────────── Collaborative document persistence (D15, Phase 5) ─────────────
 
 model DocumentState {
-  pageId               String   @id @db.Uuid
+  pageId               String    @id @db.Uuid
   foldedState          Bytes // compacted full Yjs state (updates up to foldedSeq merged in)
   persistedStateVector Bytes // per-client maximum of everything stored: foldedState plus all DocumentUpdate rows
   persistedDigest      Bytes // coverage (state vector + delete set) of the document at its last store; only decides whether a store is a no-op
-  foldedSeq            BigInt   @default(0) // highest DocumentUpdate.seq merged into foldedState
-  updatedAt            DateTime @updatedAt @db.Timestamptz(6)
+  foldedSeq            BigInt    @default(0) // highest DocumentUpdate.seq merged into foldedState
+  // Phase 8 restore barrier (D62): while `restoreToken` is set and not expired, only the holder of the token may store.
+  restoreToken         String?   @db.Uuid
+  restoreOwnerId       String?   @db.Uuid
+  restoreExpiresAt     DateTime? @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
@@ -296,4 +319,67 @@ model DocumentUpdate {
 
   @@index([pageId, seq])
   @@map("document_updates")
+}
+
+// ───────────── Phase 8: version history (D9) ─────────────
+
+model DocumentSnapshot {
+  id             String       @id @default(uuid()) @db.Uuid
+  pageId         String       @db.Uuid
+  kind           SnapshotKind
+  label          String?      @db.VarChar(120)
+  state          Bytes // full Yjs state at capture time
+  sizeBytes      Int
+  coverageDigest Bytes // sha-256 of the document coverage; lets AUTO snapshots skip unchanged documents
+  createdById    String?      @db.Uuid // null for AUTO
+  contributorIds String[]     @db.Uuid // distinct editors since the previous snapshot
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+
+  page      Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("SnapshotCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([pageId, createdAt(sort: Desc)])
+  @@map("document_snapshots")
+}
+
+// ───────────── Phase 8: comments (D8) ─────────────
+
+model CommentThread {
+  id           String       @id @default(uuid()) @db.Uuid
+  pageId       String       @db.Uuid
+  anchorStart  Bytes // encoded Yjs RelativePosition
+  anchorEnd    Bytes // encoded Yjs RelativePosition
+  quotedText   String       @db.VarChar(500) // text at creation time, for display when detached
+  anchorStatus AnchorStatus @default(ACTIVE)
+  createdById  String?      @db.Uuid
+  resolvedById String?      @db.Uuid
+  resolvedAt   DateTime?    @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+
+  page       Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  createdBy  User?     @relation("ThreadCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedBy User?     @relation("ThreadResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  comments   Comment[]
+
+  @@index([pageId, resolvedAt])
+  @@map("comment_threads")
+}
+
+model Comment {
+  id          String    @id @default(uuid()) @db.Uuid
+  threadId    String    @db.Uuid
+  authorId    String?   @db.Uuid
+  body        String // plain text, 1-5000 chars (CHECK)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?   @db.Uuid
+
+  thread    CommentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author    User?         @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  deletedBy User?         @relation("CommentDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt])
+  @@map("comments")
 }

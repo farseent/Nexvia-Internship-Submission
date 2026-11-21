@@ -1,7 +1,7 @@
 # CoNote – Database Schema
 
-**Status:** Phase 2 implemented `User` and `Session` (migration `20261112120000_auth_users_sessions`, see §4.1.1). **Phase 3 implemented `Workspace`, `WorkspaceMember`, `Invitation`, `Page`, `PagePermission` and `ActivityLog` (migration `20261114090000_workspaces_pages_permissions`, see §12; hand-written to match what Prisma generates, not yet verified against a real database).** All other models below remain planned for later phases. **The Phase 2 migration SQL was written by hand and applied/tested against PostgreSQL 16 in the preparation sandbox; it has not yet been run by `prisma migrate deploy` or compared with the schema by `prisma migrate diff` (the Prisma schema engine could not be downloaded there). Run the verification in HANDOVER §7 before relying on it.**
-**Last updated:** 2026-11-14
+**Status:** Phases 2–8 are implemented: `User` and `Session` (Phase 2, §4.1.1); `Workspace`, `WorkspaceMember`, `Invitation`, `Page`, `PagePermission` and `ActivityLog` (Phase 3, §12); `page_contents` (interim, a read-only seed source since Phase 6) and `assets` (Phase 4, §13); `document_states` and `document_updates` (Phase 5, §14); `document_snapshots`, `comment_threads`, `comments` and the restore-barrier columns on `document_states` (Phase 8, §15). Phases 6 and 7 added no migration. **Every migration is hand-written SQL in Prisma's naming (Prisma's schema engine was not available where they were written). The owner ran `prisma migrate deploy`, `migrate status` and the scratch-database drift check for them, all clean with no new migration proposed: Phase 2 on 2026-11-13, Phase 3 on 2026-11-15, Phases 4 and 5 on 2026-11-16 and Phase 8 on 2026-11-20 (HANDOVER §7.9, §8.8, §9.11, §10.9, §13.11).** Models not listed here remain planned.
+**Last updated:** 2026-11-20
 
 Decision IDs (`D#`, `U#`) are in [DECISIONS.md](DECISIONS.md). Persistence guarantees (`G1`–`G7`) are in [ARCHITECTURE.md](ARCHITECTURE.md) §8. REST resources that map to these models are in [API_CONTRACTS.md](API_CONTRACTS.md).
 
@@ -299,6 +299,10 @@ model DocumentState {
   persistedStateVector Bytes                         // coverage of foldedState + all stored DocumentUpdate rows
   persistedDigest      Bytes                         // Phase 5: SHA-256 of the live doc's state vector + delete set at its last store; only decides whether a store is a no-op
   foldedSeq            BigInt   @default(0)          // highest DocumentUpdate.seq merged into foldedState
+  // Phase 8 (D62): the durable restore barrier. All three are set together or all three are null (CHECK).
+  restoreToken         String?   @db.Uuid            // held by the instance running a restore; only the holder may store
+  restoreOwnerId       String?   @db.Uuid            // the user who asked for the restore (diagnostics)
+  restoreExpiresAt     DateTime? @db.Timestamptz(6)  // a crashed holder cannot block the page for ever
   updatedAt            DateTime @updatedAt @db.Timestamptz(6)
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
@@ -325,6 +329,7 @@ model DocumentSnapshot {
   label          String?      @db.VarChar(120)
   state          Bytes                              // full Yjs state at capture time
   sizeBytes      Int
+  coverageDigest Bytes                              // Phase 8: SHA-256 of state vector + delete set; lets AUTO snapshots skip an unchanged document
   createdById    String?      @db.Uuid              // null for AUTO
   contributorIds String[]     @db.Uuid              // distinct editors since previous snapshot
   createdAt      DateTime     @default(now()) @db.Timestamptz(6)
@@ -444,7 +449,8 @@ Indexes: `users_email_key` (unique), `sessions_tokenHash_key` (unique), `session
 |---|---|---|
 | `DocumentState` | One row per page; compacted state | PK = `pageId` (1:1 with `Page`). Created lazily by the collab server on first store (`INSERT ... ON CONFLICT DO NOTHING`). Doubles as the **per-page lock row** (§7). |
 | `DocumentUpdate` | Append-only incremental updates | `seq` increases monotonically. `CHECK (octet_length("update") > 0)`. |
-| `DocumentSnapshot` | Version history | Immutable after insert (no update path in code). `contributorIds` = distinct editor ids since the previous snapshot. |
+| `DocumentSnapshot` | Version history | Immutable after insert: no update path in code **and** a trigger that rejects `UPDATE` (Phase 8). Rows go away only with their page (cascade) or through AUTO-retention pruning (D63). `contributorIds` = distinct editor ids (users with a `page.edited` activity row) since the previous snapshot of the page. |
+| `DocumentState` restore barrier | Serializes a restore against stores (D62) | `restoreToken`, `restoreOwnerId`, `restoreExpiresAt`. While the barrier is unexpired, `DocumentStore.appendDiff` refuses any caller that does not present the token. Set and cleared under the same row lock as stores. |
 
 ### 4.5 Comments
 
@@ -505,6 +511,15 @@ ALTER TABLE pages ADD CONSTRAINT pages_not_own_parent CHECK ("parentId" IS NULL 
 -- document data and comments
 ALTER TABLE document_updates ADD CONSTRAINT document_updates_nonempty CHECK (octet_length("update") > 0);
 ALTER TABLE comments ADD CONSTRAINT comments_body_length CHECK (char_length(body) BETWEEN 1 AND 5000);
+
+-- Phase 8
+ALTER TABLE document_snapshots ADD CONSTRAINT document_snapshots_state_nonempty CHECK (octet_length("state") > 0);
+ALTER TABLE document_snapshots ADD CONSTRAINT document_snapshots_size_matches CHECK ("sizeBytes" = octet_length("state"));
+ALTER TABLE comment_threads ADD CONSTRAINT comment_threads_anchors_nonempty CHECK (octet_length("anchorStart") > 0 AND octet_length("anchorEnd") > 0);
+ALTER TABLE document_states ADD CONSTRAINT document_states_restore_barrier_complete CHECK (
+  ("restoreToken" IS NULL AND "restoreOwnerId" IS NULL AND "restoreExpiresAt" IS NULL)
+  OR ("restoreToken" IS NOT NULL AND "restoreOwnerId" IS NOT NULL AND "restoreExpiresAt" IS NOT NULL));
+-- Snapshots are immutable: BEFORE UPDATE trigger document_snapshots_no_update raises an exception.
 ```
 
 ## 6. Activity action catalog
@@ -551,7 +566,7 @@ WHERE "pageId" = $1;
 
 **Recovery (Phase 5 amendment: read the rows first, then the state, without a lock):** a compaction that commits between the two reads leaves rows that are already folded into the state read afterwards (skipped by `seq`, and applying them twice is harmless). Reading the state first could miss rows that a compaction folds and deletes in between. Original text: read `foldedState`, then `SELECT "update" FROM document_updates WHERE "pageId" = $1 AND seq > foldedSeq ORDER BY seq`, apply all to a fresh `Y.Doc`. Applying an update twice is harmless (Yjs updates are idempotent), so a recovery that overlaps a concurrent compaction stays correct.
 
-**Snapshots:** `Y.encodeStateAsUpdate(liveDoc)` stored in `document_snapshots.state` (full state, GC left at default). Restore reads a snapshot, applies its content as one transaction to the live document, and never deletes snapshots (G7).
+**Snapshots:** `Y.encodeStateAsUpdate(liveDoc)` stored in `document_snapshots.state` (full state, GC left at default). Restore reads a snapshot, applies its content as one transaction to the live document, and never deletes snapshots (G7). Phase 8 detail: §15.
 
 **Sizing and growth:** the full-document write happens only at compaction and snapshot time, not per edit. Growth, compaction thresholds and snapshot retention are measured and tuned in Phases 9–10 (PERF-05, PERF-06); no sizes are assumed here.
 
@@ -605,7 +620,7 @@ WHERE "pageId" = $1;
 
 ## 12. Phase 3 implementation notes (2026-11-14)
 
-- **Migration:** `20261114090000_workspaces_pages_permissions` creates the enums `WorkspaceRole`, `PageAccessRole`, `InvitationStatus` and the six tables. The Prisma-style section (tables, indexes, foreign keys) is followed by hand-written SQL for what Prisma cannot express. It was written without a database available and has **not** been applied or drift-checked; the owner must run `pnpm db:migrate:deploy` and the scratch-database `migrate:dev` drift check (HANDOVER §8.6).
+- **Migration:** `20261114090000_workspaces_pages_permissions` creates the enums `WorkspaceRole`, `PageAccessRole`, `InvitationStatus` and the six tables. The Prisma-style section (tables, indexes, foreign keys) is followed by hand-written SQL for what Prisma cannot express. It was written without a database available. **The owner's `pnpm db:migrate:deploy`, `migrate status` and scratch-database `migrate:dev` drift check were clean on 2026-11-15 (HANDOVER §8.8).**
 - **`InvitationStatus`** gains `DECLINED` (D48) in addition to the designed values. `revokedAt` also records when an invitation was declined.
 - **Composite parent reference:** `Page` declares the self relation on `(workspaceId, parentId) → (workspaceId, id)` in `schema.prisma`, so the foreign key is Prisma-managed and named `pages_workspaceId_parentId_fkey` (not `pages_parent_same_workspace_fk` as in §5), keeping `migrate dev` drift-free. There is no separate single-column `parentId` foreign key. A `NULL` `parentId` (root page) skips the check (`MATCH SIMPLE`).
 - **Hand-written constraints (all in the migration):** partial unique index `workspace_members_one_owner`; function `assert_workspace_has_exactly_one_owner()` with deferred constraint triggers `workspaces_owner_check` and `workspace_members_owner_check`; checks `invitations_role_not_owner`, `invitations_email_lowercase`, `invitations_token_hash_format`; partial unique index `invitations_one_pending_per_email`; checks `pages_not_own_parent` and `pages_position_format` (`^[0-9a-z]*[1-9a-z]$`). Trigger failures use SQLSTATE `23514`.
@@ -614,7 +629,7 @@ WHERE "pageId" = $1;
 
 ## 13. Phase 4 implementation notes (2026-11-15)
 
-- **Migration:** `20261115120000_editor_content_assets` creates the enums `AssetPurpose` (`PAGE_IMAGE`, `AVATAR`) and `AssetStatus` (`PENDING`, `READY`) and the tables `page_contents` and `assets`. The Prisma-style part (tables, indexes, foreign keys) is followed by hand-written CHECK constraints. **The migration was applied to a PostgreSQL 16 database by a script that runs the SQL files and records them in `_prisma_migrations`; Prisma's schema engine could not be downloaded in the environment it was written in, so `prisma migrate deploy` and the scratch-database drift check (`migrate:dev`) have not been run for it.** Run both before relying on it (HANDOVER §9.8).
+- **Migration:** `20261115120000_editor_content_assets` creates the enums `AssetPurpose` (`PAGE_IMAGE`, `AVATAR`) and `AssetStatus` (`PENDING`, `READY`) and the tables `page_contents` and `assets`. The Prisma-style part (tables, indexes, foreign keys) is followed by hand-written CHECK constraints. The migration was first applied to a PostgreSQL 16 database by a script that runs the SQL files and records them in `_prisma_migrations`, because Prisma's schema engine could not be downloaded in the environment it was written in. **The owner then ran `prisma migrate deploy`, `migrate status` and the scratch-database drift check (`migrate:dev`) on 2026-11-16: all clean, no new migration proposed (HANDOVER §9.11).**
 - **`page_contents` (interim, D54):** `pageId` (primary key and foreign key to `pages`, `ON DELETE CASCADE`), `schemaVersion`, `content` (JSONB), `revision` (1 for the first save, +1 per save; the compare-and-set token), `updatedById` (`ON DELETE SET NULL`), `updatedAt`. CHECKs: `content` is a JSON object; `revision >= 1` and `schemaVersion >= 1`. The table is removed when Phase 6 introduces the Yjs document store. It is **not** the design of §7.
 - **`assets` (D55):** as designed in §4 except that `User.avatarAssetId` and its relation are not created (avatar upload is deferred). `workspaceId` cascades with the workspace; `pageId` is set to null when a page is purged (and the `asset-cleanup` job then removes the asset and its object); `uploadedById` is set to null with the user. `objectKey` is unique, at most 512 characters and generated by the server. CHECK: `sizeBytes > 0`. There is deliberately no CHECK that a `PAGE_IMAGE` has a page, because the `SET NULL` above must be able to run. `createdAt` is set by the application clock (not the database default) so the upload-expiry check and the tests use one time source.
 - **Indexes:** `assets(workspaceId)`, `assets(pageId)`, `assets(status, createdAt)` (cleanup job).
@@ -622,8 +637,18 @@ WHERE "pageId" = $1;
 
 ## 14. Phase 5 implementation notes (2026-11-16)
 
-- **Migration:** `20261116120000_yjs_document_store` creates `document_states` and `document_updates` (Prisma-style table, index and foreign-key SQL written by hand, because Prisma's schema engine was not available; **`migrate deploy`, `migrate status` and the scratch-database drift check have not been run**, HANDOVER §10.4) and two CHECKs: `document_updates_nonempty` (`octet_length("update") > 0`) and `document_states_foldedSeq_nonnegative`.
+- **Migration:** `20261116120000_yjs_document_store` creates `document_states` and `document_updates` (Prisma-style table, index and foreign-key SQL written by hand, because Prisma's schema engine was not available; **the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-16**, HANDOVER §10.9) and two CHECKs: `document_updates_nonempty` (`octet_length("update") > 0`) and `document_states_foldedSeq_nonnegative`.
 - **Deviation from §3:** `DocumentState.persistedDigest BYTEA NOT NULL` was added (D57 item 4). It is empty (zero bytes) for a row that has never stored anything.
 - **Relations:** `Page.state` (1:1) and `Page.updates`; both cascade on page deletion, so a purged page leaves no document data.
 - **Access:** only `DocumentStore` (`packages/db/src/document-store.ts`) touches these tables. Writes use the Prisma model API for byte columns; the single raw query is `SELECT 1 … WHERE "pageId" = $1::uuid FOR UPDATE`, which takes the lock.
-- **Not created:** `DocumentSnapshot` and `SnapshotKind` (Phase 8). `page_contents` stays until Phase 6 (D54).
+- **Created later:** `DocumentSnapshot` and `SnapshotKind` came in Phase 8 (§15). `page_contents` was kept after Phase 6 as a read-only seed source (D59); whether and when to drop it is still open.
+
+## 15. Phase 8 implementation notes (2026-11-19)
+
+- **Migration:** `20261119120000_comments_versions` creates the enums `SnapshotKind` (`AUTO`, `MANUAL`, `PRE_RESTORE`) and `AnchorStatus` (`ACTIVE`, `DETACHED`), the tables `document_snapshots`, `comment_threads` and `comments`, three columns on `document_states` (the restore barrier, D62), the CHECKs listed in §5 and the immutability trigger. The Prisma-style part is written by hand in Prisma's naming (Prisma's schema engine could not be downloaded in the environment it was written in). It was first applied to PostgreSQL 16 by a script that runs the SQL and records it in `_prisma_migrations`. **The owner then ran `prisma migrate deploy` and `migrate status`, and the scratch-database drift check (`pnpm db:migrate:dev` against an empty database) on 2026-11-20: all 6 migrations applied from empty, the database was reported in sync with the schema and no new migration was proposed, so the SQL matches `schema.prisma` (HANDOVER §13.11).** The immutability trigger was also checked by hand: `UPDATE document_snapshots SET label='x'` is rejected.
+- **Deviation from §3:** `DocumentSnapshot.coverageDigest BYTEA NOT NULL` was added (D63): the SHA-256 of the document's state vector and delete set, the same measure `DocumentState.persistedDigest` uses. It decides only whether an automatic snapshot would repeat the latest one.
+- **Barrier semantics:** `DocumentStore.acquireRestoreBarrier` succeeds when there is no barrier or it has expired, and refuses otherwise; `releaseRestoreBarrier` clears it only for the token holder; `appendDiff` takes an optional `restoreToken` and throws `DocumentRestoringError` for anyone else while the barrier is unexpired. Compaction is not blocked (it changes no content). All of it runs under the page lock row (§7), so it holds across collaboration instances.
+- **Comment deletion:** a thread with no remaining non-deleted comment is not returned by the API (there is no `deletedAt` on `CommentThread`).
+- **Retention (U11, decided):** `MANUAL` and `PRE_RESTORE` snapshots are kept until their page is purged. `AUTO` snapshots are pruned to the newest `COLLAB_AUTO_SNAPSHOT_KEEP` (default 50) per page, inside the transaction that creates a new one. No time-based expiry. Measured growth is a Phase 10 item (PERF-05).
+- **Contributors:** `ActivityLog` rows with `action = 'page.edited'`, written by the collaboration server at most once per user per page per `COLLAB_EDIT_ACTIVITY_INTERVAL_MS` (default 5 minutes); the throttle restarts whenever a snapshot is taken, so a user who keeps editing is listed on the next snapshot too.
+- **Access:** `SnapshotStore` (`packages/db/src/snapshots.ts`) is the only writer of `document_snapshots`; the API reads it with the Prisma client for VER-01 … VER-03. Comments are read and written only by the API, except `comment_threads.anchorStatus`, which the collaboration server updates after a restore.

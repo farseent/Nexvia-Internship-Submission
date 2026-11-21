@@ -9,6 +9,8 @@ export interface Dependencies {
   prisma: PrismaClient;
   /** A new connection for subscribing to Redis channels (a subscribing connection can do nothing else). */
   createSubscriber(): Redis;
+  /** Publish on a Redis channel (page events). Best effort: never throws. */
+  publish(channel: string, message: string): Promise<void>;
   checkPostgres(): Promise<DependencyStatus>;
   checkRedis(): Promise<DependencyStatus>;
   close(): Promise<void>;
@@ -32,6 +34,15 @@ export function createDependencies(
         logger.warn({ err: { name: err.name, message: err.message } }, 'redis subscriber error');
       });
       return subscriber;
+    },
+    publish: async (channel, message) => {
+      try {
+        // The shared client connects lazily (and never queues offline): connect on first use.
+        if (redis.status === 'wait') await redis.connect();
+        await redis.publish(channel, message);
+      } catch (err) {
+        logger.warn({ err: { name: (err as Error).name }, channel }, 'redis publish failed');
+      }
     },
     checkPostgres: () => checkDatabase(prisma),
     checkRedis: () => checkRedis(redis),

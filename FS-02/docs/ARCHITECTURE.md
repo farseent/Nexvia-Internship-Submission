@@ -1,7 +1,7 @@
 # CoNote – Architecture
 
 **Status:** Phase 1 infrastructure and **Phase 2 authentication (§10)** are implemented and locally verified by the owner. Decisions D41–D47 were accepted by the owner on 2026-11-13. The collaboration architecture, persistence model and the remaining product features remain design-only.
-**Last updated:** 2026-11-19 (Phase 6 added, §23; Phase 6 verified locally and D58–D60 accepted; Phase 7 presence, awareness §6/§18 of WEBSOCKET_PROTOCOL, verified locally by the owner on 2026-11-19 and D61 accepted)
+**Last updated:** 2026-11-20 (Phase 8 verified locally by the owner and D62 and D63 accepted, §24; Phase 6 added, §23; Phase 6 verified locally and D58–D60 accepted; Phase 7 presence, awareness §6/§18 of WEBSOCKET_PROTOCOL, verified locally by the owner on 2026-11-19 and D61 accepted)
 
 Decision IDs (`D#`) and unresolved IDs (`U#`) are defined in [DECISIONS.md](DECISIONS.md). Requirement IDs (`FR-*`, `NFR-*`, `PERF-*`) are in [PROJECT_MASTER.md](PROJECT_MASTER.md). Statements marked **(to verify)** are assumptions that the Phase 1 spike or a named phase must confirm before they are relied on (collected in §18).
 
@@ -468,7 +468,7 @@ Hocuspocus hook payloads use web-standard `Request`/`Headers` since v4; document
 | V7 | Next.js rewrite forwarding of `Origin`, `Host`, `X-Forwarded-*`, `Set-Cookie` | **Resolved in Phase 2** (Next.js 16.4.6, dev and `next start`): `Origin`, `Cookie`, `Content-Type`, body and `Set-Cookie` pass through; `X-Forwarded-Host` is added; **`X-Forwarded-For`/`-Proto` are not added and a client-supplied `X-Forwarded-For` passes unmodified** (§10.3) |
 | V8 | Prisma 7 + pnpm monorepo setup (generator output, driver adapter, config) | **Resolved in Phase 1a**: client generation, real adapter query, baseline migration deploy/status reported successful (U5; HANDOVER §3) |
 | V9 | Exactly which Yjs binding package the pinned Tiptap version needs (`@tiptap/y-tiptap`) | **Phase 5 (D57; verified 2026-11-16 by install and test run, HANDOVER §10.8)**: `@tiptap/extension-collaboration` 3.33.1 + `@tiptap/y-tiptap` 3.0.7; one `yjs` 13.6.33 copy, no peer warnings. The newest `@tiptap/y-tiptap` is 3.3.0; it was not tested |
-| V10 | Applying a server-side transaction to a live document for restore | Phase 8 |
+| V10 | Applying a server-side transaction to a live document for restore | Phase 8 – **verified (2026-11-19)**: `openDirectConnection(...).transact(...)` applies a delta as one update that reaches all connected clients and the store hooks (apps/collab/test/versions.int.test.ts); `disconnect({ unloadImmediately:false })` keeps the document loaded. Throwing in `beforeHandleMessage` closes the connection, so the write gate sets `connection.readOnly` instead (D62, accepted 2026-11-20). Also exercised in two real browsers on 2026-11-20 (restore reached both; typing during a restore paused and resumed; HANDOVER §13.11). |
 | V11 | WebSocket message size limits and connection-limit mechanisms in Hocuspocus 4 | Phase 6 / 9 |
 | V12 | Client-to-server stateless messages: handler hook availability and payload semantics in 4.8 | Phase 1 spike / Phase 6 |
 | V13 | Close-event codes the Hocuspocus provider surfaces for auth failures and custom closes | Phase 1 spike / Phase 6 |
@@ -579,3 +579,43 @@ Browser (Next.js page)                       API (Fastify)                  Coll
 | API down | existing connections continue; reconnection needs a token, so it waits |
 | Collaboration key not configured on the API | `PAGE-10` answers 503; the editor shows "could not be opened" |
 | Page or workspace deleted while open | connections revoked; the document is dropped |
+## 24. Phase 8: comments and version history (2026-11-19)
+
+Decisions D62 and D63 (accepted by the owner on 2026-11-20; Phase 8 was owner-verified locally, including restore in two real browsers, on the same day: HANDOVER §13.11). Wire details: WEBSOCKET_PROTOCOL §19; tables: DATABASE_SCHEMA §15; REST: API_CONTRACTS §16; tests: TESTING §8.0g.
+
+### 24.1 What now exists
+
+```
+Browser                                   API (Fastify)                    Collab (Hocuspocus)               PostgreSQL
+ CommentsPanel ── REST CMT-01..06 ───────▶ comment_threads / comments                                           threads, comments
+   │   ▲                                   │ publish comments.changed ──▶ Redis conote:events:page ──▶ relay ──▶
+   │   └─ refetch on event / reconnect ◀───┘
+ editor plugin: highlights = decorations from relative positions resolved against the live Y.Doc
+ VersionHistoryPanel ── REST VER-01..03 ──▶ document_snapshots (read)
+   └─ version.create / version.restore (stateless) ─▶ VersionService: snapshot, barrier, gate, delta ─▶ document_snapshots,
+                                                      PostgreSQL barrier (document_states) + page.edited (activity_logs)   document_states
+```
+
+- **Comments stay outside the Yjs document** (D8): nothing is written into the fragment; highlights are decorations (`packages/editor/src/comment-highlights.ts`) computed from the thread's relative positions after every Yjs transaction.
+- **`apps/collab/src/versions.ts`** (`VersionService`) owns snapshots, contributors (`page.edited`), automatic snapshots, restore, anchor re-evaluation and the page-event relay (`page-events.ts`). `server.ts` only routes hooks to it.
+- **`packages/editor/src/comment-anchors.ts`** holds `createCommentAnchor`, `resolveCommentAnchor`, `anchorStatusInDoc` and `planRestore`. It is reachable only through `@conote/editor/collaboration` (D58).
+- **`packages/db`**: `SnapshotStore`, and `DocumentStore` gains the barrier (`acquireRestoreBarrier`, `releaseRestoreBarrier`, `isRestoring`, `restoreToken` option, `DocumentRestoringError`).
+
+### 24.2 Flows
+
+- **Comment:** select text → anchor from the selection (two relative positions) → `POST threads` → the API stores it and publishes `comments.changed` → every client refetches and draws the highlight.
+- **Edit around a comment:** relative positions name operations, not offsets, so highlights follow the text through other people's edits; deleting all anchored text makes the thread detached (shown with its quoted text, not lost).
+- **View a version:** `GET .../state` → separate `Y.Doc` → read-only editor. The live document is never involved.
+- **Restore:** WEBSOCKET_PROTOCOL §19.3. Guarantees: PRE_RESTORE exists before anything changes; the change is one transaction; a failure changes nothing; other instances cannot store during the barrier; clients are read-only during it and sync afterwards.
+
+### 24.3 Failure modes added
+
+| Failure | Behaviour |
+|---|---|
+| Restore requested twice | second gets `CONFLICT` |
+| Collab instance dies while holding the barrier | barrier expires after `COLLAB_RESTORE_BARRIER_TTL_MS`; the document is unchanged unless the apply had happened (then it is stored by the next store); the PRE_RESTORE snapshot remains |
+| PostgreSQL fails while taking the PRE_RESTORE snapshot | restore aborted, document unchanged |
+| PostgreSQL fails while storing the restored document | live document restored, store retried (G2), `durable:false` |
+| Snapshot content invalid for the current schema | restore refused before anything changes |
+| Redis down | `comments.changed` and `document.restored` missed; clients refetch on reconnect; another instance catches up at its next restore or reload |
+| Automatic snapshot fails | logged; the next store tries again; the document is already stored |

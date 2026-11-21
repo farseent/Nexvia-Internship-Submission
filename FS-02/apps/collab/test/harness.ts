@@ -19,6 +19,7 @@ import { requireInfraEnv } from '../../../tests/helpers.js';
 import type { CollabConfig } from '../src/config.js';
 import { createDependencies } from '../src/dependencies.js';
 import { buildCollabServer, type CollabServer } from '../src/server.js';
+import type { VersionHooks } from '../src/versions.js';
 
 /** The `ws` WebSocket class, for tests that run client code in another environment (jsdom). */
 export { WebSocket as NodeWebSocket };
@@ -48,6 +49,8 @@ export interface HarnessOptions {
   persistence?: { retryDelayMs?: (attempt: number) => number };
   prisma?: PrismaClient;
   clock?: () => Date;
+  /** Fault injection for version history tests (Phase 8). */
+  versionHooks?: VersionHooks;
 }
 
 /** A running collaboration server against the real PostgreSQL and Redis, plus seeding helpers. */
@@ -94,6 +97,10 @@ export class Harness {
       maxMessagesPerSecond: 10_000,
       maxAwarenessPerSecond: 10_000,
       shutdownTimeoutMs: 5000,
+      autoSnapshotIntervalMs: 3_600_000,
+      autoSnapshotKeep: 50,
+      editActivityIntervalMs: 3_600_000,
+      restoreBarrierTtlMs: 30_000,
       ...options.config,
     };
     const collab = buildCollabServer({
@@ -102,6 +109,7 @@ export class Harness {
       dependencies,
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.persistence ? { persistence: options.persistence } : {}),
+      ...(options.versionHooks ? { versionHooks: options.versionHooks } : {}),
     });
     await collab.start();
     const redis = new Redis(infra.REDIS_URL);

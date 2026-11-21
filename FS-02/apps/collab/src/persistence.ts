@@ -32,6 +32,12 @@ export class DocumentPersistence {
   private readonly attempts = new Map<string, number>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private stopped = false;
+  /** The restore barrier token this instance holds for a page, if any (Phase 8, D62). */
+  private restoreToken: (pageId: string) => string | undefined = () => undefined;
+
+  setRestoreTokenProvider(provider: (pageId: string) => string | undefined): void {
+    this.restoreToken = provider;
+  }
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -93,7 +99,12 @@ export class DocumentPersistence {
     const pageId = this.pageId(documentName);
     let result;
     try {
-      result = await this.store.appendDiff(pageId, document);
+      const token = this.restoreToken(pageId);
+      result = await this.store.appendDiff(
+        pageId,
+        document,
+        token === undefined ? {} : { restoreToken: token },
+      );
     } catch (err) {
       // A page that no longer exists (its workspace was deleted) can never be stored again.
       // Retrying for ever would keep the document, and a shutdown, waiting; drop it instead.

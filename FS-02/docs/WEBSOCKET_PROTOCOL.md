@@ -1,7 +1,8 @@
 # CoNote – WebSocket Protocol
 
 **Status:** Protocol design only. (Phase 3 note: the REST API now publishes the §10 access events `member.role_changed`, `member.removed`, `workspace.deleted` and `page.access_changed` to Redis after commit; nothing consumes them until Phase 6.) The Phase 1 collab process shell and health endpoints exist, but every document connection is deliberately rejected; no CoNote collaboration protocol feature is implemented. The disposable Phase 1b harness is prepared under `spikes/collab-poc/`, but S1–S11 have not yet been executed; all runtime-dependent statements below remain subject to the verification register.
-**Last updated:** 2026-11-19
+**Last updated:** 2026-11-20
+**Phase 8 note (2026-11-20):** versions, restore, page events and the restore write gate are implemented (§19) and were owner-verified locally in real browsers on 2026-11-20 (HANDOVER §13.11); D62 and D63 were accepted. One clarification: `VersionService.isRestoring()` reports the in-process gate, which goes up before the PostgreSQL barrier is acquired; the cross-instance barrier is read with `DocumentStore.isRestoring()` (D62).
 **Phase 7 note (2026-11-18):** presence (Yjs awareness, carets, selections, online list, join/leave notices) is implemented; §18 records what the server and client do. It replaces the Phase 6 rule that awareness is discarded (§17) and refines §6 (identity is stamped by the server, D61, accepted 2026-11-19). The owner verified presence locally in real browsers on 2026-11-19 (HANDOVER §12.11).
 **Phase 6 note (2026-11-17):** the WebSocket server, authentication, permission enforcement, revalidation, reconnection handling and the web client are implemented and were owner-verified locally on 2026-11-18 (HANDOVER §11.11); §17 records what was built and where it differs from the design above. §§1–16 are otherwise unchanged.
 **Phase 5 note (2026-11-16):** no WebSocket feature exists yet. §5a records what Phase 5 implemented at the Yjs level (sync step 1/2 as library functions, local/remote update handling, seeding rule) so Phase 6 can wrap it in the wire protocol; it was executed in a preparation environment on 2026-11-16 (HANDOVER §10.8) but no wire protocol exists yet.
@@ -494,3 +495,40 @@ y-protocols ignores an awareness update whose clock it has not seen advance, and
 4. Idle connections: awareness is renewed every 15 s, which now sends traffic on an otherwise idle connection; a long idle run (§17.8 item 6) was not repeated.
 5. Multi-instance presence (Phase 9) is untested; a state is bound to the instance that holds the connection.
 6. The 30 s expiry was not observed in wall-clock time.
+## 19. Phase 8: versions, restore and page events as implemented (2026-11-19)
+
+### 19.1 Commands (client → server, `onStateless`)
+
+`{ v:1, type, id, payload }`, validated by `parseClientCommand` (`packages/shared/src/collab-protocol.ts`). An unregistered type, a bad payload or an unknown field is answered with `error { code: INVALID_MESSAGE, replyTo }` and counts as a violation (close after the existing limit). Both commands need a **read-write** role, **read again from PostgreSQL when the command arrives** (a demotion that has not yet reached the connection is still honoured); otherwise `error FORBIDDEN`.
+
+| Command | Payload | Answer |
+|---|---|---|
+| `version.create` | `{ label?: string (1–120) }` | `response { ok, result: { versionId } }`; `error CONFLICT` while a restore runs |
+| `version.restore` | `{ versionId }` | `response { ok, result: { versionId, preRestoreVersionId, durable } }`, or `error NOT_FOUND` (no such version on this page), `CONFLICT` (a restore is already running here or elsewhere), `INTERNAL_ERROR` (nothing was changed) |
+
+### 19.2 Messages (server → clients of the page)
+
+`response`, `version.created { versionId, kind, label, createdBy }`, `version.restore.started { restoredBy }`, `version.restored { versionId, preRestoreVersionId, restoredBy }`, `version.restore.failed { reason }`, `comments.changed { pageId }`. `version.created` is also sent for automatic snapshots and for the PRE_RESTORE snapshot of a restore.
+
+### 19.3 Restore as built (supersedes the sketch in §8 where they differ)
+
+1. Authorize; set the in-process gate (a second restore of the page on this instance gets `CONFLICT` at once); load the snapshot (`NOT_FOUND` otherwise); acquire the PostgreSQL barrier (`CONFLICT` if another holder has it). Broadcast `version.restore.started`.
+2. While the gate is up, every write message of a connection to the page is dropped by Hocuspocus (the connection is set read-only inside `beforeHandleMessage`; **throwing there would close the connection**). Awareness and reads are unaffected.
+3. Drain: store the live document under the token; read PostgreSQL and merge what other instances stored into the working state.
+4. Compute the delta on a scratch copy (`planRestore`); commit the `PRE_RESTORE` snapshot; apply the delta in one transaction through a Hocuspocus direct connection; store it under the token.
+5. Re-evaluate comment anchors (`DETACHED` / `ACTIVE`); log `version.restored`; **release the barrier and the gate**; then announce `version.created` (PRE_RESTORE), `version.restored` and `comments.changed`, publish `document.restored`.
+6. Any failure before step 4's apply: nothing changed, `version.restore.failed` is broadcast, the requester gets `error INTERNAL_ERROR`, the barrier and gate are released. If only the final store fails, the live document is restored for everyone, `durable:false` is returned and the normal store retry continues (G2).
+7. The web client puts the editor read-only on `version.restore.started`; on `version.restored` or `version.restore.failed` it re-enables editing and calls `forceSync()`, which sends whatever the server dropped (it merges; text typed into replaced content is not shown).
+
+### 19.4 Page events (Redis `conote:events:page`)
+
+`{ v:1, type: 'comments.changed' | 'document.restored', pageId, at }`, validated; malformed events are ignored. `comments.changed` (published by the API) is forwarded to the page's connections on every instance. `document.restored` (published by the restoring instance) makes other instances that have the page loaded merge the stored restore into their live document. At-most-once; clients refetch comments after every reconnection.
+
+### 19.5 Known limits
+
+- Until Redis document sync exists (Phase 9), two instances do not exchange ordinary edits live; the barrier and the restore event are the only cross-instance mechanisms added here.
+- A restore uses memory for two extra copies of the document (the working copy and the target); no size limit is enforced yet (Phase 10).
+
+### 19.6 Verification (2026-11-20)
+
+The owner checked save, read-only view, restore, undo of a restore (through the "Before a restore" entry), typing in a second browser during a restore, and a restart of the collaboration server in two real browsers, and the immutability trigger on `document_snapshots` in PostgreSQL (HANDOVER §13.11). Live convergence of ordinary edits across two instances is not covered and waits for Phase 9.

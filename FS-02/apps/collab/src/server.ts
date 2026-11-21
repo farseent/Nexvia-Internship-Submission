@@ -1,12 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { Server, type Extension } from '@hocuspocus/server';
+import { Server, type Document, type Extension } from '@hocuspocus/server';
 import type { Logger } from 'pino';
 import { DocumentStore } from '@conote/db';
 import {
   COLLAB_CLOSE,
-  encodeServerMessage,
   evaluateCollabReadiness,
+  parseClientCommand,
   parseClientEnvelope,
   type Liveness,
   type Readiness,
@@ -17,9 +17,11 @@ import type { Clock, CollabConfig } from './config.js';
 import { ConnectionRegistry, type CollabContext } from './connection-registry.js';
 import type { Dependencies } from './dependencies.js';
 import { DocumentPersistence, type PersistenceOptions } from './persistence.js';
+import { PageEventListener } from './page-events.js';
 import { PresenceGuard } from './presence.js';
 import { PeriodicRevalidation } from './revalidation.js';
 import { TokenVerifier } from './token-verifier.js';
+import { VersionService, isCollabContext, type VersionHooks } from './versions.js';
 import { classifyInbound } from './wire-messages.js';
 
 const SERVICE = 'collab';
@@ -35,6 +37,8 @@ export interface BuildServerOptions {
   dependencies: Dependencies;
   clock?: Clock;
   persistence?: Partial<Pick<PersistenceOptions, 'retryDelayMs'>>;
+  /** Test hooks for fault injection (Phase 8). */
+  versionHooks?: VersionHooks;
 }
 
 export interface CollabServer {
@@ -45,6 +49,8 @@ export interface CollabServer {
   readonly events: AccessEventListener;
   readonly revalidation: PeriodicRevalidation;
   readonly presence: PresenceGuard;
+  readonly versions: VersionService;
+  readonly pageEvents: PageEventListener;
   /** Port actually bound (useful with port 0). */
   readonly port: number;
   start(): Promise<void>;
@@ -103,6 +109,21 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
   });
   const allowedOrigins = new Set(config.allowedOrigins);
   let stopping = false;
+  // The Hocuspocus instance exists only after the hooks below; the version service reaches it lazily.
+  const versions = new VersionService(
+    dependencies.prisma,
+    new DocumentStore(dependencies.prisma),
+    persistence,
+    registry,
+    access,
+    config,
+    clock,
+    logger,
+    () => server.hocuspocus,
+    (channel, message) => dependencies.publish(channel, message),
+    options.versionHooks,
+  );
+  const pageEvents = new PageEventListener(dependencies.createSubscriber(), versions, logger);
 
   async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = (request.url ?? '/').split('?')[0];
@@ -194,6 +215,11 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
         access.close(context, COLLAB_CLOSE.RATE_LIMITED);
         throw new Error('rate limited');
       }
+      if (classifyInbound(update) === 'sync-write' && versions.isRestoring(context.pageId)) {
+        // A restore is running (D62): Hocuspocus drops writes of a read-only connection and tells
+        // the client they were not applied. The restore end puts each connection back to its role.
+        if (context.connection) context.connection.readOnly = true;
+      }
       if (context.readOnly && classifyInbound(update) === 'sync-write') {
         context.droppedWrites += 1;
         if (context.droppedWrites % DROPPED_WRITE_LOG_EVERY === 1) {
@@ -222,34 +248,58 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
       presence.apply({ context, document, states, removedClients });
     },
 
-    /** Application messages (WEBSOCKET_PROTOCOL §7). Phase 6 registers no client commands. */
-    async onStateless({ connection, payload }) {
+    /**
+     * Application messages (WEBSOCKET_PROTOCOL §7). Phase 8 registers `version.create` and
+     * `version.restore`; anything else is refused and counted as a violation.
+     */
+    async onStateless({ connection, document, payload }) {
       const context = connection.context as CollabContext;
       const envelope = parseClientEnvelope(payload);
-      context.violations += 1;
-      logger.warn(
-        { userId: context.userId, pageId: context.pageId, valid: envelope !== null },
-        'rejected an application message',
-      );
-      try {
-        connection.sendStateless(
-          encodeServerMessage({
-            v: 1,
-            type: 'error',
-            ...(envelope?.id === undefined ? {} : { replyTo: envelope.id }),
-            payload: { code: 'INVALID_MESSAGE', message: 'This message is not supported.' },
-          }),
+      const parsed = envelope === null ? null : parseClientCommand(envelope);
+      if (envelope === null || parsed === null || !parsed.ok) {
+        context.violations += 1;
+        logger.warn(
+          { userId: context.userId, pageId: context.pageId, valid: envelope !== null },
+          'rejected an application message',
         );
-      } catch {
-        // The connection is going away.
+        access.send(context, {
+          v: 1,
+          type: 'error',
+          ...(envelope?.id === undefined ? {} : { replyTo: envelope.id }),
+          payload: { code: 'INVALID_MESSAGE', message: 'This message is not supported.' },
+        });
+        if (context.violations >= MAX_APP_VIOLATIONS)
+          access.close(context, COLLAB_CLOSE.PROTOCOL_VIOLATION);
+        return;
       }
-      if (context.violations >= MAX_APP_VIOLATIONS)
-        access.close(context, COLLAB_CLOSE.PROTOCOL_VIOLATION);
+      const command = parsed.command;
+      const outcome =
+        command.type === 'version.create'
+          ? await versions.create(context, document as Document, command)
+          : await versions.restore(context, document as Document, command);
+      const replyTo = command.id === undefined ? {} : { replyTo: command.id };
+      access.send(
+        context,
+        outcome.ok
+          ? { v: 1, type: 'response', ...replyTo, payload: { ok: true, result: outcome.result } }
+          : {
+              v: 1,
+              type: 'error',
+              ...replyTo,
+              payload: { code: outcome.code, message: outcome.message },
+            },
+      );
+    },
+
+    /** An accepted change by a client: logged for contributors, and the page is marked changed. */
+    async onChange({ context }) {
+      if (isCollabContext(context)) versions.recordEdit(context);
     },
 
     async onStoreDocument({ documentName, document, instance, ...payload }) {
       try {
         await persistence.persist(documentName, document);
+        await versions.autoSnapshotIfDue(documentName, document);
       } catch (err) {
         logger.error(
           {
@@ -272,11 +322,16 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
       }
     },
 
+    async beforeUnloadDocument({ documentName, document }) {
+      await versions.autoSnapshotOnUnload(documentName, document);
+    },
+
     async afterUnloadDocument({ documentName }) {
       await persistence.compactOnUnload(documentName);
     },
 
     async onDisconnect({ context, documentName, socketId, clientsCount }) {
+      if (!isCollabContext(context)) return; // a direct (server-side) connection, not a client
       context.release?.();
       context.release = undefined;
       registry.remove(context);
@@ -330,6 +385,8 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     events,
     revalidation,
     presence,
+    versions,
+    pageEvents,
     get port() {
       return server.address.port;
     },
@@ -338,6 +395,7 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
       await verifier.assertKeysUsable();
       await server.listen();
       await events.start();
+      await pageEvents.start();
       revalidation.start();
       logger.info({ port: server.address.port }, 'collab server listening');
     },
@@ -362,6 +420,7 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
       for (const context of registry.snapshot())
         access.close(context, COLLAB_CLOSE.SERVER_RESTARTING);
       await events.stop();
+      await pageEvents.stop();
       persistence.stop();
       // Hocuspocus waits for every document to unload; one whose store keeps failing never does.
       // Bound the wait: the process is about to exit, and the error above says what was at risk.

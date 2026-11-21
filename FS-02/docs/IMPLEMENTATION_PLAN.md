@@ -371,6 +371,8 @@ AC-1.8 is met at spike level. AC-1.9 remains partial pending item-by-item review
 
 ## Phase 8 – Comments and Version History
 
+**Status (2026-11-20):** implemented 2026-11-19 and executed in a preparation environment (HANDOVER §13.8: 61 files, 1077 tests passing); owner-verified locally on 2026-11-20 (HANDOVER §13.11): migration deploy and drift check clean, build, lint, format check and typecheck passed, comments and version history (including restore) checked in two real browsers; D62 and D63 accepted. The one failing test in the owner's full run was a test-ordering bug in `apps/collab/test/versions.int.test.ts` and was corrected (file: 27 of 27). AC-8.6 is met for one instance and for the persistence barrier across two instances; live convergence of ordinary edits between instances waits for Phase 9. Not done: a full-suite rerun after the test fix, the automated two-browser test, Docker, CI, final owner acceptance.
+
 **Objectives:** Anchored comment threads and a complete, safe version history.
 
 **Scope:** FR-CM-01 … FR-CM-06, FR-VH-01 … FR-VH-06.

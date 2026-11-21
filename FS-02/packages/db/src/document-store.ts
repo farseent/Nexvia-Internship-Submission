@@ -84,6 +84,37 @@ interface LockedState {
   persistedStateVector: Uint8Array;
   persistedDigest: Uint8Array;
   foldedSeq: bigint;
+  restoreToken: string | null;
+  restoreExpiresAt: Date | null;
+}
+
+/**
+ * Thrown by a store while a restore barrier held by someone else is active (D62). The caller
+ * keeps the document in memory and tries again: the barrier is released or expires.
+ */
+export class DocumentRestoringError extends Error {
+  constructor(readonly pageId: string) {
+    super(`Page ${pageId} is being restored; stores are refused until the barrier ends.`);
+    this.name = 'DocumentRestoringError';
+  }
+}
+
+export interface StoreOptions {
+  /** The restore barrier token of the caller; lets the holder store while the barrier is active. */
+  restoreToken?: string;
+  now?: Date;
+}
+
+export interface BarrierRequest {
+  token: string;
+  ownerId: string;
+  ttlMs: number;
+  now?: Date;
+}
+
+/** The SHA-256 of a document's coverage (state vector + delete set); equal digests mean equal documents. */
+export function coverageDigestOf(doc: Y.Doc): Uint8Array<ArrayBuffer> {
+  return digestOf(encodeDocumentCoverage(doc));
 }
 
 export class DocumentStore {
@@ -99,11 +130,58 @@ export class DocumentStore {
    * unchanged. Deletions change the delete set but not the state vector, so "unchanged" is
    * decided on the document's full coverage (`encodeDocumentCoverage`), not on the vector.
    */
-  async appendDiff(pageId: string, doc: Y.Doc): Promise<AppendResult> {
+  async appendDiff(pageId: string, doc: Y.Doc, options: StoreOptions = {}): Promise<AppendResult> {
     return this.prisma.$transaction(async (tx) => {
       const state = await this.lockState(tx, pageId, true);
+      assertBarrierAllows(pageId, state, options);
       return this.storeDiff(tx, pageId, state, doc);
     }, TRANSACTION_OPTIONS);
+  }
+
+  /**
+   * Establish the durable restore barrier of a page (D62, WEBSOCKET_PROTOCOL §8). Under the page
+   * lock: succeeds when there is no barrier or the existing one has expired; returns `false`
+   * when another holder's barrier is active (the caller answers `CONFLICT`). PostgreSQL is the
+   * authority, so this works across collaboration instances. The expiry bounds how long a
+   * crashed holder can block stores.
+   */
+  async acquireRestoreBarrier(pageId: string, request: BarrierRequest): Promise<boolean> {
+    const now = request.now ?? new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const state = await this.lockState(tx, pageId, true);
+      if (barrierActive(state, now)) return false;
+      await tx.documentState.update({
+        where: { pageId },
+        data: {
+          restoreToken: request.token,
+          restoreOwnerId: request.ownerId,
+          restoreExpiresAt: new Date(now.getTime() + request.ttlMs),
+        },
+      });
+      return true;
+    }, TRANSACTION_OPTIONS);
+  }
+
+  /** Release the barrier if `token` still holds it. Returns whether it was released. */
+  async releaseRestoreBarrier(pageId: string, token: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const state = await this.lockState(tx, pageId, false);
+      if (state === null || state.restoreToken !== token) return false;
+      await tx.documentState.update({
+        where: { pageId },
+        data: { restoreToken: null, restoreOwnerId: null, restoreExpiresAt: null },
+      });
+      return true;
+    }, TRANSACTION_OPTIONS);
+  }
+
+  /** True while an unexpired barrier exists on the page. */
+  async isRestoring(pageId: string, now: Date = new Date()): Promise<boolean> {
+    const row = await this.prisma.documentState.findUnique({
+      where: { pageId },
+      select: { restoreToken: true, restoreExpiresAt: true },
+    });
+    return row !== null && barrierActive(row, now);
   }
 
   /**
@@ -242,6 +320,8 @@ export class DocumentStore {
         persistedStateVector: true,
         persistedDigest: true,
         foldedSeq: true,
+        restoreToken: true,
+        restoreExpiresAt: true,
       },
     });
   }
@@ -297,4 +377,21 @@ export class DocumentStore {
   ): Promise<number> {
     return tx.documentUpdate.count({ where: { pageId, seq: { gt: foldedSeq } } });
   }
+}
+
+function barrierActive(
+  state: { restoreToken: string | null; restoreExpiresAt: Date | null },
+  now: Date,
+): boolean {
+  return (
+    state.restoreToken !== null &&
+    state.restoreExpiresAt !== null &&
+    state.restoreExpiresAt.getTime() > now.getTime()
+  );
+}
+
+function assertBarrierAllows(pageId: string, state: LockedState, options: StoreOptions): void {
+  if (!barrierActive(state, options.now ?? new Date())) return;
+  if (options.restoreToken !== undefined && options.restoreToken === state.restoreToken) return;
+  throw new DocumentRestoringError(pageId);
 }

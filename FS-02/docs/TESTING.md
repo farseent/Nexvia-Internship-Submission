@@ -1,7 +1,7 @@
 # CoNote – Testing Strategy
 
 **Status:** Phase 1a test foundation (reported passing by the owner: 9 files, 59 tests) plus **Phase 2 authentication tests, run by Claude in a preparation environment: 17 files, 228 tests passed (115 unit + 113 integration), twice in a row** (§8.0a). The Phase 1b spike harness is under `spikes/collab-poc/`. **Phase 3 tests were run by the owner on 2026-11-15 against PostgreSQL and Redis: `pnpm check` passed with 482 tests** (§8.0b). **Phase 5 (Yjs integration) tests were run by the owner on 2026-11-16: 43 files, 802 tests passed on Node 24.18.0 and PostgreSQL 17** (§8.0d). There is no network collaboration yet (Phase 6), so no collaboration test runs through a server or a browser. **Browser E2E (Playwright) is not implemented.**
-**Last updated:** 2026-11-19
+**Last updated:** 2026-11-20 (Phase 8 tests added: §8.0g; owner verification of Phase 8 recorded in §8.0g)
 
 Decision IDs (`D#`, `U#`) are in [DECISIONS.md](DECISIONS.md); requirements and metrics (`FR-*`, `NFR-*`, `PERF-*`) in [PROJECT_MASTER.md](PROJECT_MASTER.md); guarantees `G1`–`G7` in [ARCHITECTURE.md](ARCHITECTURE.md) §8; phases and acceptance criteria (`AC-*`) in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
@@ -408,6 +408,46 @@ Run: `pnpm test --testTimeout=20000`. The new int tests need `pnpm db:migrate:de
 | 400 | 7,799 | 11.2 | 10.7 / 11.6 |
 
 Raw line printed by the harness: `PERF-06 baseline {"node":"v24.18.0","platform":"win32/x64","results":[{"pendingRows":10,"runs":5,"loadMsMedian":6.1,"loadMsMin":5.8,"loadMsMax":15.9,"totalUpdateBytes":218},{"pendingRows":100,"runs":5,"loadMsMedian":8.7,"loadMsMin":8.2,"loadMsMax":10.4,"totalUpdateBytes":1838},{"pendingRows":400,"runs":5,"loadMsMedian":11.2,"loadMsMin":10.7,"loadMsMax":11.6,"totalUpdateBytes":7799}]}`. These numbers supersede the preparation-environment numbers above for this project; they say nothing about large documents, real network latency or concurrent users. The individual commands were run separately; `pnpm check` as one command was not run.
+
+### 8.0g Phase 8 tests (written and run by Claude in a preparation environment, 2026-11-19; owner-verified on the owner's machine, 2026-11-20)
+
+**Environment:** Node v22.23.5 (the project requires 24), PostgreSQL 16 and Redis 7 installed locally, Prisma schema engine unavailable (migrations applied by script, see DATABASE_SCHEMA §15). Baseline before the phase: **55 files, 966 tests passed (137 s)**. After: **61 files, 1077 tests passed (172 s)** with `--testTimeout=30000`; 111 new tests in six new files plus extensions of `collab-session.test.ts`.
+
+| File | Tests | What it proves |
+|---|---|---|
+| `apps/api/test/comments.int.test.ts` | 15 | CMT-01 … 06: create/reply/resolve/reopen/delete, validation, pagination and filters, role matrix (Viewer 403, stranger 404 identical to missing), page-permission overrides, idempotence and activity counts, `comments.changed` published after commit and not for refused or no-op calls, trashed pages, authentication (AC-8.2, AC-8.10) |
+| `apps/api/test/versions.int.test.ts` | 4 | VER-01 … 03: order, kind filter, pagination, contributors, binary state identical to the stored bytes and loadable, 404 across pages and for strangers, authentication (AC-8.8) |
+| `packages/db/test/versions.int.test.ts` | 15 | snapshots: full state round trip, page scoping, AUTO skipped only when unchanged (also after a deletion), immutability (Prisma and raw `UPDATE` rejected), rollback on a fault, size CHECK, cascade; contributors (AC-8.9); barrier: single holder, 8 simultaneous requests → 1 winner, store refused for others and unchanged, held edit stored after release, expiry, compaction not blocked, CHECK (AC-8.5, D62) |
+| `packages/editor/src/comment-anchors.test.ts` | 20 | on real Tiptap editors bound to Y.Docs: anchors follow text through insertions before and inside the range by another client, concurrent edits, two paragraphs; boundary behaviour; detached on deletion in editors and on a bare `Y.Doc`; highlights are decorations only (document and Yjs state unchanged), follow edits, report detached, wait for sync; `planRestore`: content equals the snapshot, history kept, null when equal, idempotent, anchors on unchanged text survive, convergence with a concurrent client, invalid snapshot refused, empty snapshot (AC-8.1, AC-8.3) |
+| `apps/collab/test/versions.int.test.ts` | 27 | on the real collaboration server: manual snapshots (live content, unstored edits included, FORBIDDEN for Commenter/Viewer, malformed commands, contributors); automatic snapshots (interval, unload, no repeat when idle, retention of AUTO only); restore (all clients converge, PRE_RESTORE holds the replaced state, event logged, history kept and re-restorable, equal content, role matrix, NOT_FOUND, role read again at command time); concurrency (writes held back and merged after `forceSync`, nothing accepted before the barrier lost, writes accepted again without reconnecting, second restore → CONFLICT, simultaneous restores serialized); failures (PRE_RESTORE fault, invalid snapshot, planning fault: document unchanged, barrier released, editing continues); two instances (second instance cannot store during the barrier and does afterwards, restore reaches the other instance, other instance's stored edits are in the PRE_RESTORE snapshot); anchors after restore (unchanged ACTIVE, replaced DETACHED, nothing lost); `comments.changed` relay and malformed events (AC-8.4 … 8.7, 8.9, 8.10) |
+| `apps/web/src/lib/collab-session.test.ts` (+10) | 30 | commands and answers, in-flight separation, not connected, destroy, restore started/restored/failed, refetch ticks including after reconnect (AC-8.10) |
+| `apps/web/src/components/editor/comments-versions.test.tsx` | 20 | comments panel (list, detached, resolved tab and reopen, reply, delete own only, create from selection with highlight, highlight follows edits, Viewer and read-only Commenter, API failure keeps the draft); version history (list, read-only preview leaves the live page untouched, confirm/cancel/refused restore, Viewer, save version, unloadable version); editor paused during a restore |
+
+**Findings during testing (all fixed):** the collaboration server's Redis client connects lazily and queues nothing, so the first `document.restored` publish was silently dropped (found by the cross-instance test); a highlight plugin that reacted to the sync plugin's empty transactions looped forever (found when the editor tests hung); y-tiptap cannot resolve a character-level position at index 0 of a text node (documented edge, D63); a failed reply cleared the typed text (UI test).
+
+**Not tested / not claimed:** real browsers (no E2E in this environment; the owner checklist is HANDOVER §13.7); live convergence of ordinary edits between two instances (Phase 9); restore of very large documents (Phase 10); `prisma migrate deploy` and the drift check (engine unavailable); Node 24. One pre-existing test (`sync.int.test.ts`, persistence retry) failed once on the owner's machine under full-suite load (HANDOVER §12.11); it passed in every run here.
+
+#### Owner verification on the owner's machine (2026-11-20)
+
+**Environment:** the owner's Windows machine (Git Bash); PostgreSQL 17 and Redis 7 from the project's Docker Compose, PostgreSQL on host port 5433; pnpm 12.18.0, Vitest 5.1.0, Prisma 7.10.1 (the Prisma CLI printed an update notice for 8.0.0-rc.34, which was not applied). The Node version was not recorded in this session.
+
+| Check | Result |
+|---|---|
+| `pnpm infra:up` | Redis and PostgreSQL healthy |
+| `pnpm install` | Already up to date |
+| `pnpm db:migrate:deploy`, `pnpm db:migrate:status` | 6 migrations found; `20261119120000_comments_versions` applied; database schema up to date |
+| Scratch-database drift check (`migrate:dev` against an empty `conote_scratch`) | The scratch database left from an earlier phase already existed and was dropped and created again; all 6 migrations applied from empty; "Your database is now in sync with your schema"; no new migration proposed; `git status` showed only the not yet committed Phase 8 migration folder |
+| `pnpm build:packages`, `lint`, `format:check`, `typecheck` | Passed (owner-reported; whether `format:check` still lists `infra/docker-compose.yml` was not recorded) |
+| `pnpm test --testTimeout=30000`, first full run | **61 files, 1076 of 1077 tests passed, 265.11 s.** Failure: `apps/collab/test/versions.int.test.ts` > "the barrier across collaboration instances (D62, AC-8.6)" > "stops a second instance storing while the restore runs, and lets it store afterwards: nothing is lost", assertion at line 589 (`expect(await new DocumentStore(first.prisma).isRestoring(pageId)).toBe(true)` received `false`) |
+| That file alone, and that test alone | Failed every time (file: 26 of 27 passed): deterministic, not a load problem |
+| Cause | A test-ordering bug, not a code defect. `VersionService.isRestoring()` reports the in-process gate, set synchronously at the start of `restore()`, which is before the PostgreSQL barrier is acquired (after an awaited role check and an awaited load of the snapshot). The test read the database barrier right after the gate went up. The order in the code is the intended, conservative one (D62) |
+| Fix (test only) | The test waits for the gate and then for the PostgreSQL barrier (`until(async () => await store.isRestoring(pageId), 'barrier up in PostgreSQL')`) before asserting. File then passed 27 of 27 (16.92 s). The `DocumentRestoringError` lines printed on stderr are the second instance's refused stores, which the test expects |
+| Owner checklist, comments (HANDOVER §13.7 items 1–4) | Two browsers (Editor and Commenter), plus a Viewer: create, reply, resolve, reopen, anchors following edits before, inside and after the commented text, detached thread with its quote, Viewer read-only. Reported as working |
+| Owner checklist, versions (HANDOVER §13.7 items 5–9) | Save version, read-only view of an old version, restore, undo through the "Before a restore" entry, typing in the other browser during a restore, collaboration-server restart, and the rejected `UPDATE document_snapshots` (immutability trigger). Reported as working |
+
+The browser checks were reported per group ("all worked", "everything passes"); no per-step detail, screenshots or timings were recorded. The known flaky Phase 6 test (`sync.int.test.ts`, HANDOVER §12.11) did not fail in this run.
+
+**Not verified:** a full-suite run after the test fix (1077 of 1077 expected); Docker `apps` profile; GitHub Actions; two collaboration instances in real browsers (live convergence of ordinary edits waits for Phase 9); more than two concurrent users; restore of very large documents (Phase 10); automated browser E2E.
 
 ### 8.0e Phase 6 tests (written and run by Claude in a preparation environment, 2026-11-17)
 

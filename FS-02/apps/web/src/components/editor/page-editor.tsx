@@ -5,7 +5,8 @@ import { TextSelection } from '@tiptap/pm/state';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createEditorExtensions } from '@conote/editor';
-import { createCollaborativeRegistry } from '@conote/editor/collaboration';
+import { createCollaborativeRegistry, type ResolvedRanges } from '@conote/editor/collaboration';
+import type { VersionMetaDto } from '@conote/shared';
 import type * as Y from 'yjs';
 import { describeApiError } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
@@ -22,6 +23,8 @@ import { EditorToolbar } from './editor-toolbar';
 import { CollabStatus } from './collab-status';
 import { PresenceBar } from './presence-bar';
 import { createSlashMenuRender } from './slash-menu';
+import { CommentsPanel } from './comments-panel';
+import { VersionHistoryPanel, VersionPreview } from './version-history';
 
 const IMAGE_INPUT_ID = 'editor-image-input';
 
@@ -37,6 +40,8 @@ interface Props {
    * the collaboration server decides, and a read-only connection cannot change the document.
    */
   canEdit: boolean;
+  /** Whether the page's role allows commenting (COMMENTER or above); defaults to `canEdit`. */
+  canComment?: boolean;
   /** Receives the editor once created; used by tests and future features. */
   onReady?: (editor: Editor) => void;
 }
@@ -48,7 +53,7 @@ const alertBox = 'rounded-md border border-red-300 bg-red-50 p-4 text-sm text-re
  * itself is the Yjs document on the collaboration server: there is no separate save step, so
  * this component has no save button, no revision and no conflict dialog.
  */
-export function PageEditor({ pageId, canEdit, onReady }: Props) {
+export function PageEditor({ pageId, canEdit, canComment, onReady }: Props) {
   const { session, state } = useCollabSession(pageId);
 
   if (state === null || session === null || (state.phase === 'connecting' && !state.everSynced)) {
@@ -92,6 +97,7 @@ export function PageEditor({ pageId, canEdit, onReady }: Props) {
       key={state.generation}
       pageId={pageId}
       canEdit={canEdit}
+      canComment={canComment ?? canEdit}
       doc={session.doc}
       session={session}
       state={state}
@@ -103,22 +109,38 @@ export function PageEditor({ pageId, canEdit, onReady }: Props) {
 function LoadedEditor({
   pageId,
   canEdit,
+  canComment,
   doc,
   session,
   state,
   onReady,
-}: Props & { doc: Y.Doc; session: CollabSession; state: CollabState }) {
+}: Props & { canComment: boolean; doc: Y.Doc; session: CollabSession; state: CollabState }) {
   const { guard, user } = useAuth();
   const uploadRef = useRef<(files: File[]) => void>(() => undefined);
   const [uploading, setUploading] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const editable = canEdit && !state.readOnly;
+  // While a version is restored the server holds writes back; the editor says so instead of
+  // accepting typing that would be refused (D62).
+  const editable = canEdit && !state.readOnly && !state.restoring;
+  const [panel, setPanel] = useState<'comments' | 'history' | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<VersionMetaDto | null>(null);
+  const [ranges, setRanges] = useState<ResolvedRanges>(new Map());
 
   // Built once per document: the registry holds the extensions, the host connects them to the page.
   const [extensions] = useState(() =>
     createEditorExtensions(
-      createCollaborativeRegistry(doc, session.awareness ? { awareness: session.awareness } : {}),
+      createCollaborativeRegistry(doc, {
+        ...(session.awareness ? { awareness: session.awareness } : {}),
+        comments: {
+          onResolved: setRanges,
+          // Nothing is judged detached before the document has synced.
+          isReady: () => {
+            const current = session.getState();
+            return current.phase === 'live' && current.everSynced;
+          },
+        },
+      }),
       {
         host: { requestImage: openImagePicker },
         renderSlashMenu: createSlashMenuRender(),
@@ -253,7 +275,73 @@ function LoadedEditor({
           {notice}
         </p>
       )}
-      <EditorContent editor={editor} className="mt-3" />
+      {state.restoring && (
+        <p
+          role="status"
+          className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900"
+        >
+          A version is being restored. Editing is paused for a moment.
+        </p>
+      )}
+      <div className="mt-2 flex gap-2" role="group" aria-label="Page panels">
+        {(['comments', 'history'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={panel === value}
+            onClick={() => setPanel(panel === value ? null : value)}
+            className={`rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 ${panel === value ? 'bg-slate-100' : 'bg-white'}`}
+          >
+            {value === 'comments' ? 'Comments' : 'Version history'}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-col gap-4 lg:flex-row">
+        <div className="min-w-0 flex-1">
+          {previewVersion && (
+            <VersionPreview
+              pageId={pageId}
+              version={previewVersion}
+              session={session}
+              state={state}
+              canEdit={canEdit}
+              onClose={() => setPreviewVersion(null)}
+            />
+          )}
+          <div hidden={previewVersion !== null}>
+            <EditorContent editor={editor} />
+          </div>
+        </div>
+        {editor && (
+          <aside
+            hidden={panel === null}
+            aria-label="Page side panel"
+            className="w-full shrink-0 lg:w-80"
+          >
+            {/* The comments panel stays mounted: it draws the highlights even when it is hidden. */}
+            <div hidden={panel !== 'comments'}>
+              <CommentsPanel
+                editor={editor}
+                pageId={pageId}
+                state={state}
+                canComment={canComment}
+                ranges={ranges}
+                ready={state.phase === 'live' && state.everSynced}
+              />
+            </div>
+            {panel === 'history' && (
+              <VersionHistoryPanel
+                pageId={pageId}
+                session={session}
+                state={state}
+                canEdit={canEdit}
+                selected={previewVersion}
+                onSelect={setPreviewVersion}
+              />
+            )}
+          </aside>
+        )}
+      </div>
     </div>
   );
 }

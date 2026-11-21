@@ -29,6 +29,8 @@ import { registerActivityRoutes } from './activity.js';
 import { registerAssetRoutes } from './assets.js';
 import { registerInvitationPublicRoutes, registerInvitationRoutes } from './invitations.js';
 import { registerCollabTokenRoutes } from './collab-token.js';
+import { registerCommentRoutes } from './comments.js';
+import { registerVersionRoutes } from './versions.js';
 import { registerPagePermissionRoutes } from './page-permissions.js';
 import { registerPageRoutes } from './pages.js';
 import { registerUserRoutes } from './users.js';
@@ -299,5 +301,9 @@ export async function registerAuthRoutes(
     // ───────────── Phase 4: images (D55); Phase 6: collaboration tokens (PAGE-10) ─────────────
     await registerCollabTokenRoutes(guarded, dependencies, config, access);
     await registerAssetRoutes(guarded, dependencies, config, access);
+
+    // ───────────── Phase 8: comments (CMT) and version history (VER) ─────────────
+    await registerCommentRoutes(guarded, dependencies, config, access);
+    await registerVersionRoutes(guarded, dependencies, config, access);
   });
 }

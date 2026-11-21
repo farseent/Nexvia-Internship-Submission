@@ -156,7 +156,12 @@ export function PageViewInner({ pageId }: { pageId: string }) {
         </p>
       </div>
 
-      <PageEditor key={page.id} pageId={page.id} canEdit={canEdit} />
+      <PageEditor
+        key={page.id}
+        pageId={page.id}
+        canEdit={canEdit}
+        canComment={roleAtLeast(page.myRole, 'COMMENTER')}
+      />
 
       {canEdit || isAdmin ? (
         <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">

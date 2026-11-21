@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ACCESS_EVENT_TYPES } from './auth.js';
+import { SNAPSHOT_KINDS, SNAPSHOT_LABEL_MAX } from './comments.js';
 
 /**
  * The wire contract between the API (which signs collaboration tokens), the collaboration
@@ -95,7 +96,7 @@ export const APP_ERROR_CODES = [
   'INTERNAL_ERROR',
 ] as const;
 
-/** Messages the server sends in Phase 6. Later phases add the version and comment messages. */
+/** Messages the server sends (Phase 6 access/shutdown/error; Phase 8 versions, comments, responses). */
 const serverMessageSchema = z.discriminatedUnion('type', [
   z.object({
     v: z.literal(COLLAB_MESSAGE_VERSION),
@@ -116,6 +117,55 @@ const serverMessageSchema = z.discriminatedUnion('type', [
     v: z.literal(COLLAB_MESSAGE_VERSION),
     type: z.literal('server.shutting_down'),
     payload: z.object({}).strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('response'),
+    replyTo: z.string().optional(),
+    payload: z
+      .object({
+        ok: z.literal(true),
+        result: z.record(z.string(), z.unknown()).optional(),
+      })
+      .strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('version.created'),
+    payload: z
+      .object({
+        versionId: z.uuid(),
+        kind: z.enum(SNAPSHOT_KINDS),
+        label: z.string().nullable(),
+        createdBy: z.uuid().nullable(),
+      })
+      .strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('version.restore.started'),
+    payload: z.object({ restoredBy: z.uuid() }).strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('version.restored'),
+    payload: z
+      .object({
+        versionId: z.uuid(),
+        preRestoreVersionId: z.uuid(),
+        restoredBy: z.uuid(),
+      })
+      .strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('version.restore.failed'),
+    payload: z.object({ reason: z.string().max(200) }).strict(),
+  }),
+  z.object({
+    v: z.literal(COLLAB_MESSAGE_VERSION),
+    type: z.literal('comments.changed'),
+    payload: z.object({ pageId: z.uuid() }).strict(),
   }),
   z.object({
     v: z.literal(COLLAB_MESSAGE_VERSION),
@@ -166,6 +216,42 @@ export function parseClientEnvelope(raw: string): ClientEnvelope | null {
   }
   const parsed = clientEnvelopeSchema.safeParse(json);
   return parsed.success ? parsed.data : null;
+}
+
+// ───────────── Client commands (Phase 8, WEBSOCKET_PROTOCOL §7) ─────────────
+
+export const versionCreatePayloadSchema = z
+  .object({ label: z.string().trim().min(1).max(SNAPSHOT_LABEL_MAX).optional() })
+  .strict();
+export const versionRestorePayloadSchema = z.object({ versionId: z.uuid() }).strict();
+
+export type ClientCommand =
+  | { type: 'version.create'; id: string | undefined; payload: { label?: string | undefined } }
+  | { type: 'version.restore'; id: string | undefined; payload: { versionId: string } };
+
+/**
+ * Validate a client envelope as a registered command. `unknown_type` for a type the server
+ * does not register, `invalid` for a registered type with a bad payload.
+ */
+export function parseClientCommand(
+  envelope: ClientEnvelope,
+): { ok: true; command: ClientCommand } | { ok: false; why: 'unknown_type' | 'invalid' } {
+  switch (envelope.type) {
+    case 'version.create': {
+      const parsed = versionCreatePayloadSchema.safeParse(envelope.payload);
+      return parsed.success
+        ? { ok: true, command: { type: 'version.create', id: envelope.id, payload: parsed.data } }
+        : { ok: false, why: 'invalid' };
+    }
+    case 'version.restore': {
+      const parsed = versionRestorePayloadSchema.safeParse(envelope.payload);
+      return parsed.success
+        ? { ok: true, command: { type: 'version.restore', id: envelope.id, payload: parsed.data } }
+        : { ok: false, why: 'invalid' };
+    }
+    default:
+      return { ok: false, why: 'unknown_type' };
+  }
 }
 
 // ───────────── Access events (Redis channel `conote:events:access`, §10) ─────────────

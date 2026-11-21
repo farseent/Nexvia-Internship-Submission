@@ -199,6 +199,14 @@ export const collabEnvSchema = z
     COLLAB_SHUTDOWN_TIMEOUT_MS: positiveInt(10_000, 600_000),
     /** Awareness messages one connection may send per second; the excess is dropped. */
     COLLAB_MAX_AWARENESS_PER_SECOND: positiveInt(30, 10_000),
+    /** Phase 8 (D63): an automatic snapshot is taken at most this often while a page is edited. */
+    COLLAB_AUTO_SNAPSHOT_INTERVAL_MS: positiveInt(600_000, 86_400_000),
+    /** Automatic snapshots kept per page; older ones are pruned. Manual and pre-restore snapshots are never pruned (U11). */
+    COLLAB_AUTO_SNAPSHOT_KEEP: positiveInt(50, 10_000),
+    /** A user's edits are logged as `page.edited` at most this often per page (contributors, AC-8.9). */
+    COLLAB_EDIT_ACTIVITY_INTERVAL_MS: positiveInt(300_000, 86_400_000),
+    /** How long a restore barrier lasts if its holder disappears (D62). */
+    COLLAB_RESTORE_BARRIER_TTL_MS: positiveInt(30_000, 600_000),
   })
   .transform((env) => ({
     ...env,

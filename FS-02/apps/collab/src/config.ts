@@ -21,6 +21,11 @@ export interface CollabConfig {
   shutdownTimeoutMs: number;
   /** Awareness messages one connection may send per second; the excess is dropped. */
   maxAwarenessPerSecond: number;
+  /** Phase 8 (D62, D63). */
+  autoSnapshotIntervalMs: number;
+  autoSnapshotKeep: number;
+  editActivityIntervalMs: number;
+  restoreBarrierTtlMs: number;
 }
 
 export function createCollabConfig(env: CollabEnv, address = '0.0.0.0'): CollabConfig {
@@ -40,5 +45,9 @@ export function createCollabConfig(env: CollabEnv, address = '0.0.0.0'): CollabC
     maxMessagesPerSecond: env.COLLAB_MAX_MESSAGES_PER_SECOND,
     shutdownTimeoutMs: env.COLLAB_SHUTDOWN_TIMEOUT_MS,
     maxAwarenessPerSecond: env.COLLAB_MAX_AWARENESS_PER_SECOND,
+    autoSnapshotIntervalMs: env.COLLAB_AUTO_SNAPSHOT_INTERVAL_MS,
+    autoSnapshotKeep: env.COLLAB_AUTO_SNAPSHOT_KEEP,
+    editActivityIntervalMs: env.COLLAB_EDIT_ACTIVITY_INTERVAL_MS,
+    restoreBarrierTtlMs: env.COLLAB_RESTORE_BARRIER_TTL_MS,
   };
 }

@@ -161,3 +161,13 @@
 .conote-selection {
   pointer-events: none;
 }
+
+/* Comment highlights (Phase 8): decorations drawn over the text, never part of the document. */
+.conote-comment-highlight {
+  background-color: rgb(253 224 71 / 0.35);
+  border-bottom: 2px solid rgb(234 179 8);
+  cursor: pointer;
+}
+.conote-comment-highlight-active {
+  background-color: rgb(253 224 71 / 0.7);
+}

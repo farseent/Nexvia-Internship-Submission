@@ -20,7 +20,13 @@ export type ActivityAction =
   | 'page.restored'
   | 'page.purged'
   | 'page.permission_set'
-  | 'page.permission_removed';
+  | 'page.permission_removed'
+  | 'page.edited'
+  | 'version.created'
+  | 'version.restored'
+  | 'comment.thread_created'
+  | 'comment.thread_resolved'
+  | 'comment.thread_reopened';
 
 export interface ActivityEntry {
   workspaceId: string;

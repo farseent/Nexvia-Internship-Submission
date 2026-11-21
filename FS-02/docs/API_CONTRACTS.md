@@ -1,7 +1,7 @@
 # CoNote – REST API Contracts
 
-**Status:** Implemented: operational endpoints `GET /health` and `GET /ready` (Phase 1) and **`AUTH-01`–`AUTH-07` and `USER-01`–`USER-02` (Phase 2; see §3.1 and §4.1 for confirmed behaviour and differences from the design)**. Phase 2 decisions D41–D47 were accepted by the owner on 2026-11-13. **Phase 3 (implemented 2026-11-14; owner-verified locally 2026-11-15; decisions D48–D53 accepted by the owner on 2026-11-15): `WS-01`–`WS-09`, `INV-01`–`INV-07` (INV-07 is new), `PAGE-01`–`PAGE-09`, `PP-01`–`PP-03`, `ACT-01`–`ACT-02`; see §15 for the implemented behaviour and differences from the design.** **Phase 6 (2026-11-17): `PAGE-10` is implemented (§7, notes below); `CONTENT-01`/`CONTENT-02` are removed (D59, accepted 2026-11-18); `PAGE-10` was exercised through the web editor in the owner's local verification on 2026-11-18 (HANDOVER §11.11).** Comments and versions remain design-only.
-**Last updated:** 2026-11-16
+**Status:** Implemented: operational endpoints `GET /health` and `GET /ready` (Phase 1) and **`AUTH-01`–`AUTH-07` and `USER-01`–`USER-02` (Phase 2; see §3.1 and §4.1 for confirmed behaviour and differences from the design)**. Phase 2 decisions D41–D47 were accepted by the owner on 2026-11-13. **Phase 3 (implemented 2026-11-14; owner-verified locally 2026-11-15; decisions D48–D53 accepted by the owner on 2026-11-15): `WS-01`–`WS-09`, `INV-01`–`INV-07` (INV-07 is new), `PAGE-01`–`PAGE-09`, `PP-01`–`PP-03`, `ACT-01`–`ACT-02`; see §15 for the implemented behaviour and differences from the design.** **Phase 6 (2026-11-17): `PAGE-10` is implemented (§7, notes below); `CONTENT-01`/`CONTENT-02` are removed (D59, accepted 2026-11-18); `PAGE-10` was exercised through the web editor in the owner's local verification on 2026-11-18 (HANDOVER §11.11).** **Phase 8 (2026-11-19): `CMT-01`–`CMT-06` and `VER-01`–`VER-03` are implemented (§16); they were exercised through the web UI in the owner's local verification on 2026-11-20 (HANDOVER §13.11).**
+**Last updated:** 2026-11-20
 
 Decision IDs (`D#`, `U#`) are in [DECISIONS.md](DECISIONS.md). Models are in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md). Collaboration traffic (Yjs sync, awareness, application events, version create/restore) is **not** REST; see [WEBSOCKET_PROTOCOL.md](WEBSOCKET_PROTOCOL.md).
 
@@ -466,3 +466,17 @@ Confirmed behaviour of the implemented endpoints, and where it adds to or differ
 - **`PP-02`:** target must be a member (`404` otherwise); admins and the owner give `409 CANNOT_RESTRICT_ADMIN`. **`PP-03`:** `404` when no override exists.
 - **`ACT-01`/`ACT-02`:** keyset pagination `(createdAt desc, id desc)`; invalid cursor is `400 VALIDATION_ERROR`. Metadata holds ids only (no emails, tokens or titles).
 - **Not implemented:** email delivery of invitations (D52); page search (no requirement).
+## 16. Phase 8 implementation notes (2026-11-19)
+
+`CMT-01` … `CMT-06` and `VER-01` … `VER-03` are implemented as specified in §10 and §11. Details that the contract left open:
+
+- **Thread list:** newest first, cursor pagination (`limit` default and maximum as in §2). Each thread carries its non-deleted comments oldest first. A thread with no remaining non-deleted comment is not returned, in any `status`. `status=open` means `resolvedAt` is null.
+- **`Thread` and `Comment` shapes:** `Thread { id, pageId, anchor: { start, end }, quotedText, anchorStatus, createdBy, createdAt, resolvedAt, resolvedBy, comments }`; `Comment { id, threadId, author, body, createdAt }`; `author`, `createdBy` and `resolvedBy` are `UserSummary` or `null` for a deleted account. `anchor.*` are base64 of at most 512 bytes.
+- **`quotedText`** is accepted up to 500 characters (it may be empty). `body` is trimmed and must be 1–5000 characters. Unknown fields are rejected (`400`).
+- **Resolve / reopen** are idempotent and answer with the thread. They log activity and publish `comments.changed` only when the state actually changes. Replying to a resolved thread is allowed and does not reopen it.
+- **Delete (`CMT-06`):** the author needs `PAGE≥COMMENTER` at the time; a workspace Admin or Owner may delete any comment; anyone else with access gets `403`; no access or an already deleted comment is `404`. Not logged in the activity log.
+- **`VersionMeta`:** `{ id, pageId, kind, label, sizeBytes, createdAt, createdBy, contributors: UserSummary[] }`; contributors whose accounts no longer exist are left out. The state is never part of the JSON.
+- **`VER-03`** sends `Content-Type: application/octet-stream` and `Cache-Control: private, no-store`. A version id belongs to its page: used through another page's URL it is `404`.
+- **Visibility:** a page in the trash and a page the caller cannot see answer `404` for every endpoint here, indistinguishable from a missing one.
+- **Events:** every committed comment change publishes `{ v:1, type:'comments.changed', pageId, at }` on `conote:events:page` after the transaction; failure to publish never fails the request.
+- **Not in the API (by design):** creating a snapshot and restoring are collaboration-connection commands (WEBSOCKET_PROTOCOL §19); comments cannot be edited; there are no notification endpoints.

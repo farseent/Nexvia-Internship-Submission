@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, describeApiError } from './api-client';
 import { useAuth } from './auth-context';
 
@@ -64,4 +64,16 @@ export function useLoad<T>(load: () => Promise<T>): LoadState<T> {
     loading,
     reload,
   };
+}
+
+/** Call `reload` again whenever `signal` changes, but not on the first render (the load already ran). */
+export function useReloadOn(signal: number, reload: () => void): void {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    reload();
+  }, [signal, reload]);
 }

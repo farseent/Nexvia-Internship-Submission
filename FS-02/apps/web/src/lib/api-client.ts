@@ -22,6 +22,9 @@ import type {
   UserDto,
   UserSummaryDto,
   WorkspaceDto,
+  CommentDto,
+  ThreadDto,
+  VersionMetaDto,
 } from '@conote/shared';
 
 /** Error raised for every failed API call, whatever the cause. */
@@ -210,6 +213,54 @@ export const api = {
   purgePage: (pageId: string) => request<null>('POST', `/api/v1/pages/${enc(pageId)}/purge`),
   listTrash: (workspaceId: string) =>
     request<{ pages: PageDto[] }>('GET', `/api/v1/workspaces/${enc(workspaceId)}/trash?limit=100`),
+
+  // ───────────── Comments (CMT) and version history (VER), Phase 8 ─────────────
+  listThreads: (pageId: string) =>
+    request<{ threads: ThreadDto[] }>(
+      'GET',
+      `/api/v1/pages/${enc(pageId)}/threads?status=all&limit=100`,
+    ),
+  createThread: (
+    pageId: string,
+    input: { anchor: { start: string; end: string }; quotedText: string; body: string },
+  ) => request<{ thread: ThreadDto }>('POST', `/api/v1/pages/${enc(pageId)}/threads`, input),
+  replyToThread: (threadId: string, body: string) =>
+    request<{ comment: CommentDto }>('POST', `/api/v1/threads/${enc(threadId)}/comments`, { body }),
+  resolveThread: (threadId: string) =>
+    request<{ thread: ThreadDto }>('POST', `/api/v1/threads/${enc(threadId)}/resolve`, {}),
+  reopenThread: (threadId: string) =>
+    request<{ thread: ThreadDto }>('POST', `/api/v1/threads/${enc(threadId)}/reopen`, {}),
+  deleteComment: (commentId: string) =>
+    request<null>('DELETE', `/api/v1/comments/${enc(commentId)}`),
+  listVersions: (pageId: string) =>
+    request<{ versions: VersionMetaDto[] }>(
+      'GET',
+      `/api/v1/pages/${enc(pageId)}/versions?limit=100`,
+    ),
+  /** The stored Yjs state of a version (VER-03), to be shown read-only. */
+  getVersionState: async (pageId: string, versionId: string): Promise<Uint8Array> => {
+    let response: Response;
+    try {
+      response = await fetch(`/api/v1/pages/${enc(pageId)}/versions/${enc(versionId)}/state`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+    } catch {
+      throw new ApiError({
+        status: 0,
+        code: 'NETWORK_ERROR',
+        message: 'Could not reach the server. Check your connection and try again.',
+      });
+    }
+    if (!response.ok) {
+      throw new ApiError({
+        status: response.status,
+        code: response.status === 404 ? 'NOT_FOUND' : 'UNKNOWN',
+        message: response.status === 404 ? 'That version does not exist.' : 'Request failed.',
+      });
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  },
 
   // ───────────── Live collaboration (PAGE-10) and images (D55) ─────────────
   /** A 60-second token for opening the page's document on the collaboration server. */

@@ -87,7 +87,11 @@ function installServer(initial: Partial<ServerState> = {}) {
       };
       calls.push(call);
       let reply: Reply;
-      if (method === 'POST' && url === '/api/v1/assets/uploads') {
+      if (method === 'GET' && /\/api\/v1\/pages\/[^/]+\/threads/.test(url)) {
+        reply = ok({ threads: [] });
+      } else if (method === 'GET' && /\/api\/v1\/pages\/[^/]+\/versions/.test(url)) {
+        reply = ok({ versions: [] });
+      } else if (method === 'POST' && url === '/api/v1/assets/uploads') {
         reply = state.imageReply?.authorize ?? {
           status: 201,
           body: {
@@ -146,6 +150,10 @@ const baseState: CollabState = {
   unsyncedChanges: false,
   generation: 1,
   reason: null,
+  restoring: false,
+  restoreError: null,
+  commentsTick: 0,
+  versionsTick: 0,
 };
 const retry = vi.fn();
 let unsynced = false;
@@ -560,8 +568,12 @@ describe('images', () => {
       sizeBytes: 3,
     });
     // The image is part of the collaborative document: it travels with the document, and no
-    // page-content request is made.
-    expect(server.calls.some((c) => c.url.includes('/pages/'))).toBe(false);
+    // page-content request is made (comment threads and versions are separate resources, Phase 8).
+    expect(
+      server.calls.some(
+        (c) => c.url.includes('/pages/') && !/\/(threads|versions)(\?|$|\/)/.test(c.url),
+      ),
+    ).toBe(false);
   });
 
   it('rejects unsupported and oversized files before sending anything', async () => {

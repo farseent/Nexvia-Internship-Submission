@@ -1,6 +1,8 @@
 # CoNote – Handover
 
-**Last updated:** 2026-11-19 (**Phase 7 owner-verified locally on 2026-11-19 (§12.11) and D61 accepted; Phase 7 implemented 2026-11-18, see the Phase 7 paragraph below. Phase 6 implemented 2026-11-17, executed in a preparation environment, and verified on the owner's machine on 2026-11-18 (§11.11): install, lint, format check, typecheck, 878 tests and a manual real-browser walkthrough passed; D58–D60 accepted**). Earlier: 2026-11-17 (Phase 6 implemented and executed in a preparation environment only); 2026-11-16 (Phase 5 implemented, executed in a preparation environment and verified on the owner's machine; D57 accepted; Phase 4 accepted by the owner on 2026-11-16 — the older "final acceptance pending" wording below is superseded)
+**Last updated:** 2026-11-20 (**Phase 8 implemented and executed in a preparation environment on 2026-11-19 (61 files, 1077 tests passing there, §13) and owner-verified locally on 2026-11-20 (§13.11): migration deploy and drift check clean, build, lint, format check and typecheck passed, one deterministic test failure traced to a test-ordering bug and fixed, comments and version history checked in two real browsers; D62 and D63 accepted.** **Phase 7 owner-verified locally on 2026-11-19 (§12.11) and D61 accepted; Phase 7 implemented 2026-11-18, see the Phase 7 paragraph below. Phase 6 implemented 2026-11-17, executed in a preparation environment, and verified on the owner's machine on 2026-11-18 (§11.11): install, lint, format check, typecheck, 878 tests and a manual real-browser walkthrough passed; D58–D60 accepted**). Earlier: 2026-11-17 (Phase 6 implemented and executed in a preparation environment only); 2026-11-16 (Phase 5 implemented, executed in a preparation environment and verified on the owner's machine; D57 accepted; Phase 4 accepted by the owner on 2026-11-16 — the older "final acceptance pending" wording below is superseded)
+
+**Phase 8 (2026-11-19):** Comments and Version History is implemented and was executed in a preparation environment (§13.8): 61 files, 1077 tests passing there (baseline 966), lint, typecheck and format clean (the repository-wide format check still fails only on `infra/docker-compose.yml`). **Verified on the owner's machine and in real browsers on 2026-11-20 (§13.11): `migrate deploy`, `migrate status` and the scratch-database drift check are clean, and the owner checklist (§13.7) worked. D62 and D63 were accepted on 2026-11-20.** Not done: a full-suite rerun after the test fix, Docker, GitHub Actions, two collab instances in real browsers (Phase 9). AC-8.6 is met for one instance and for the persistence barrier across two; live convergence of ordinary edits across instances waits for Phase 9 (§13.3). Stop after Phase 8, as instructed.
 
 **Phase 7 (2026-11-18):** Presence and Collaborative UI is implemented and was executed in a preparation environment (§12.8): 55 files, 966 tests passing there (baseline 878), lint and typecheck clean. **Verified on the owner's machine and in real browsers on 2026-11-19 (§12.11): install, package build, lint, format check, typecheck, the full test run (965 of 966 tests passed; the one failure is a Phase 6 persistence test that is flaky under load and passed 4 of 4 times alone) and the whole owner checklist (§12.7) in real browsers. D61 was accepted on 2026-11-19.** Not done: final Phase 7 acceptance, Docker, GitHub Actions, long idle runs. Stopped after Phase 7 as instructed. Read §12.4 (findings), §12.7 (owner checklist) and §12.11 (verification) first.
 
@@ -14,7 +16,9 @@
 
 **Next step (2026-11-18, superseded by the paragraph below):** the owner records final acceptance of Phase 6 (and the earlier open sign-offs); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile (the collab container needs the new collaboration variables, §11.6) and GitHub Actions on the Phase 6 change (the lockfile was regenerated and has not run on a clean runner); then Phase 7 – Presence and Collaborative UI. The two deleted Phase 1 collab test files must be part of the commit (§11.9).
 
-**Next step (current, 2026-11-19):** the owner records final acceptance of Phase 7 (and the earlier open sign-offs, Phases 2–6); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–7 changes (the lockfile changes have not run on a clean runner); optionally makes the flaky Phase 6 test wait for its counter (§12.11); then Phase 8 – Comments and Version History.
+**Next step (2026-11-19, superseded by the paragraph below):** the owner records final acceptance of Phase 7 (and the earlier open sign-offs, Phases 2–6); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–7 changes (the lockfile changes have not run on a clean runner); optionally makes the flaky Phase 6 test wait for its counter (§12.11); then Phase 8 – Comments and Version History.
+
+**Next step (current, 2026-11-20):** the owner commits the Phase 8 files (the new migration folder `packages/db/prisma/migrations/20261119120000_comments_versions/` and the corrected `apps/collab/test/versions.int.test.ts` must be part of the commit) and runs the full suite once more (1077 of 1077 expected; the known flaky Phase 6 test may still fail under load); records final acceptance of Phase 8 (and the earlier open sign-offs, Phases 2–7); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–8 changes (the lockfile changes have not run on a clean runner); then Phase 9 – Redis Scaling and Performance.
 
 Read `CLAUDE.md` first. This file is the source of truth for current project status.
 
@@ -26,13 +30,13 @@ Read `CLAUDE.md` first. This file is the source of truth for current project sta
 
 | Repository | pnpm monorepo with `apps/web`, `apps/api`, `apps/collab`, `packages/db`, `packages/shared`, `packages/editor`; root scripts, CI, Dockerfiles and local Compose configuration are present |
 
-| Product features | **Implemented but unverified (Phase 3): workspaces, membership and roles, invitations (link-based), nested pages, soft delete/restore/purge, page-level permissions, activity log, and the web UI for all of these (§8).** **Implemented (Phase 2): registration, login, logout, DB-backed sessions, session list/revoke, password change, profile (display name, presence colour) with web pages.** **Implemented, owner-verified locally 2026-11-16 (Phase 4): single-user rich-text editor (headings, bold/italic/underline, lists, checklists, links, tables, images, alignment, slash commands, toolbar) with interim autosave persistence and image upload (§9).** **Implemented, owner-verified locally 2026-11-18 (Phase 6): real-time collaborative editing through the Hocuspocus server (live sync, read-only roles, revocation, reconnection); the interim autosave is removed (§11).** **Implemented, owner-verified locally 2026-11-19 (Phase 7): presence — avatar stack, online list, collaborator carets and selections, join/leave notices; nothing is stored (§12).** Not implemented: comments, version history, avatar upload (still open from Phase 4), email verification, password reset |
+| Product features | **Implemented but unverified (Phase 3): workspaces, membership and roles, invitations (link-based), nested pages, soft delete/restore/purge, page-level permissions, activity log, and the web UI for all of these (§8).** **Implemented (Phase 2): registration, login, logout, DB-backed sessions, session list/revoke, password change, profile (display name, presence colour) with web pages.** **Implemented, owner-verified locally 2026-11-16 (Phase 4): single-user rich-text editor (headings, bold/italic/underline, lists, checklists, links, tables, images, alignment, slash commands, toolbar) with interim autosave persistence and image upload (§9).** **Implemented, owner-verified locally 2026-11-18 (Phase 6): real-time collaborative editing through the Hocuspocus server (live sync, read-only roles, revocation, reconnection); the interim autosave is removed (§11).** **Implemented, owner-verified locally 2026-11-19 (Phase 7): presence — avatar stack, online list, collaborator carets and selections, join/leave notices; nothing is stored (§12).** **Implemented, owner-verified locally 2026-11-20 (Phase 8): anchored comment threads (replies, resolve, reopen, delete, live highlights, detached display), manual and automatic version snapshots, read-only version view, and restore with a PRE_RESTORE snapshot (§13).** Not implemented: comment editing, notifications, avatar upload (still open from Phase 4), email verification, password reset |
 
 | API | Fastify foundation, `/health` and `/ready`, (Phase 2) `AUTH-01`–`AUTH-07`, `USER-01`–`USER-02`, and (Phase 3, unverified) `WS-01`–`WS-09`, `INV-01`–`INV-07`, `PAGE-01`–`PAGE-09`, `PP-01`–`PP-03`, `ACT-01`–`ACT-02` and, (Phase 4, owner-verified locally) `ASSET-01`–`ASSET-04` (the interim `CONTENT-01`–`CONTENT-02` were removed in Phase 6, D59) and, Phase 6, `PAGE-10` under `/api/v1`, with CSRF checks, rate limiting, helmet, CORS, session cleanup job |
 
-| Collaboration server | **Phase 6 (2026-11-17; executed in a preparation environment, owner-verified locally 2026-11-18, §11.11):** Hocuspocus server with collaboration-token verification, database-derived roles, read-only enforcement, access events and periodic revalidation, store retry, graceful shutdown and limits; the web editor is connected to it. Single instance. **Phase 7 (2026-11-18; owner-verified locally 2026-11-19, §12.11):** presence — the server stamps the relayed identity, binds one awareness client id to each connection, keeps only a validated cursor, rate-limits awareness and never stores it (D61). Before Phase 6 it was a shell that rejected every connection (D38) |
+| Collaboration server | **Phase 6 (2026-11-17; executed in a preparation environment, owner-verified locally 2026-11-18, §11.11):** Hocuspocus server with collaboration-token verification, database-derived roles, read-only enforcement, access events and periodic revalidation, store retry, graceful shutdown and limits; the web editor is connected to it. Single instance. **Phase 7 (2026-11-18; owner-verified locally 2026-11-19, §12.11):** presence — the server stamps the relayed identity, binds one awareness client id to each connection, keeps only a validated cursor, rate-limits awareness and never stores it (D61). Before Phase 6 it was a shell that rejected every connection (D38). **Phase 8 (2026-11-19; owner-verified locally 2026-11-20, §13.11):** `version.create` and `version.restore` commands, automatic snapshots, restore behind a PostgreSQL barrier with an in-process write gate (D62), and a Redis page-event listener |
 
-| Database | Prisma 7.10.1; baseline migration, `20261112120000_auth_users_sessions` (`User`, `Session`) and, `20261114090000_workspaces_pages_permissions` (Phase 3 models, hand-written SQL incl. the deferred one-owner trigger). **Phase 4 adds `20261115120000_editor_content_assets` (`page_contents` — interim — and `assets`, hand-written SQL; §9); the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-16 (§9.11).** That migration is hand-written SQL. The owner's local `migrate deploy`, `migrate status` and scratch-database `migrate:dev` drift check were clean on 2026-11-13 (§7.9). **Phase 5 adds `20261116120000_yjs_document_store` (`document_states`, `document_updates`; hand-written SQL; §10); the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-16 (§10.9).** The web app still persists content only through the interim `page_contents` table (D54); the Yjs `DocumentStore` exists and is tested but nothing in the apps calls it until Phase 6 **(superseded by Phase 6, D59: the collab server now stores documents through the `DocumentStore`, the HTTP autosave is gone and `page_contents` is a read-only seed source)** |
+| Database | Prisma 7.10.1; baseline migration, `20261112120000_auth_users_sessions` (`User`, `Session`) and, `20261114090000_workspaces_pages_permissions` (Phase 3 models, hand-written SQL incl. the deferred one-owner trigger). **Phase 4 adds `20261115120000_editor_content_assets` (`page_contents` — interim — and `assets`, hand-written SQL; §9); the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-16 (§9.11).** That migration is hand-written SQL. The owner's local `migrate deploy`, `migrate status` and scratch-database `migrate:dev` drift check were clean on 2026-11-13 (§7.9). **Phase 5 adds `20261116120000_yjs_document_store` (`document_states`, `document_updates`; hand-written SQL; §10); the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-16 (§10.9).** The web app still persists content only through the interim `page_contents` table (D54); the Yjs `DocumentStore` exists and is tested but nothing in the apps calls it until Phase 6 **(superseded by Phase 6, D59: the collab server now stores documents through the `DocumentStore`, the HTTP autosave is gone and `page_contents` is a read-only seed source)** **Phase 8 adds `20261119120000_comments_versions` (`document_snapshots`, `comment_threads`, `comments`, restore-barrier columns on `document_states`; hand-written SQL; §13); the owner's `migrate deploy`, `migrate status` and scratch-database drift check were clean on 2026-11-20 (§13.11).** |
 
 | Local infrastructure | PostgreSQL 17 and Redis 7 Compose services reported healthy. PostgreSQL host port 5433 maps to container port 5432; Redis host port 6379 |
 
@@ -50,6 +54,8 @@ Read `CLAUDE.md` first. This file is the source of truth for current project sta
 
 | Phase 7 | **Implemented 2026-11-18; owner-verified locally 2026-11-19.** `pnpm install`, `pnpm build:packages`, lint, format check and typecheck pass; the full test run reached 55 files and 965 of 966 tests (`--testTimeout=30000`, 257.73 s), the single failure being a Phase 6 persistence test in `apps/collab/test/sync.int.test.ts` that is flaky under load (passed 4 of 4 times alone); API, collab and web started and login worked; the owner checklist (§12.7 items 2–7) was checked in real browsers and reported working. D61 accepted 2026-11-19. **Not done:** final owner acceptance, Docker, CI, long idle runs, automated browser E2E. See §12 and §12.11. |
 
+| Phase 8 | **Implemented 2026-11-19; owner-verified locally 2026-11-20.** `migrate deploy`, `migrate status` and the scratch-database drift check are clean; build, lint, format check and typecheck pass; the full test run reached 61 files and 1076 of 1077 tests (`--testTimeout=30000`, 265.11 s), the single failure being a test-ordering bug in `apps/collab/test/versions.int.test.ts` (it failed every time, alone as well); the test was corrected and the file passes 27 of 27, the full suite was not rerun; the owner checklist (§13.7) was checked in two real browsers and reported working. D62 and D63 accepted 2026-11-20. **Not done:** a full-suite rerun after the fix, final owner acceptance, Docker, CI, two collab instances in real browsers (Phase 9), automated browser E2E. See §13 and §13.11. |
+
 ### Decisions and open items
 
 - **D33:** Owner selected Phase 1b before Phase 2. D33 is recorded as accepted.
@@ -66,6 +72,8 @@ Read `CLAUDE.md` first. This file is the source of truth for current project sta
 - **D54–D56 (Phase 4):** proposed on 2026-11-15; **accepted by the owner on 2026-11-16.** D54 is an interim second source of truth for page content that Phase 6 removes.
 - **D58–D60 (Phase 6):** proposed on 2026-11-17; **accepted by the owner on 2026-11-18** (§11.11). Open after D59: whether and when to drop the read-only `page_contents` table (needs a migration and an owner decision).
 - **D61 (Phase 7):** proposed on 2026-11-18; **accepted by the owner on 2026-11-19** (§12.11). It deliberately deviates from WEBSOCKET_PROTOCOL §6: names and colours are stamped by the server, not resolved from REST.
+
+- **D62 and D63 (Phase 8):** proposed on 2026-11-19; **accepted by the owner on 2026-11-20** (§13.11). They resolve U8 (detached threads) and U11 for snapshots; activity-log pruning remains open for Phase 10.
 
 - **U13:** Explicit production recovery after Redis Pub/Sub message loss remains a Phase 9 decision. Redis reconnection alone is not proof of reconvergence.
 
@@ -180,13 +188,13 @@ This is the Phase 0 owner-review snapshot and is retained for history. D16 and D
 
 | U7 | Image upload flow, limits, MinIO status | Phase 4 |
 
-| U8 | Comment anchors after version restore (recommendation: mark detached) | Phase 8 |
+| U8 – resolved (D63, accepted 2026-11-20) | Comment anchors after version restore: threads are kept and marked detached | Phase 8 |
 
 | U9 | External guests (recommendation: out of scope) | Phase 3 |
 
 | U10 | Production hosting target | Phase 11 |
 
-| U11 | Retention for AUTO snapshots and activity logs | Phase 8 / 10 |
+| U11 – resolved for snapshots (D63, accepted 2026-11-20); activity-log pruning open for Phase 10 | Retention for AUTO snapshots and activity logs | Phase 8 / 10 |
 
 | U12 | Repository license and visibility | Before publishing |
 
@@ -1218,3 +1226,137 @@ The checks were reported as "all good" per group; no per-step detail, screenshot
 **Decision:** D61 accepted by the owner on 2026-11-19.
 
 **Still not verified:** Docker `apps` profile; GitHub Actions; a single `pnpm check` run (the commands were run separately); idle longer than two minutes with the 15 s awareness renewal; the 30 s expiry in wall-clock time; more than three concurrent users in real browsers; a profile change while connected; two collab instances (Phase 9); automated browser E2E (Playwright, AC-7.1).
+## 13. Phase 8 – implementation record (2026-11-19)
+
+### 13.1 Scope
+
+Phase 8 = Comments and Version History (IMPLEMENTATION_PLAN Phase 8; FR-CM-01 … 06, FR-VH-01 … 06): anchored threads with replies, resolve, reopen and delete; automatic and manual snapshots with contributors; version list and read-only view; restore as a new transaction that is safe against concurrent editing. Written and executed by Claude in a preparation environment (Node v22.23.5, PostgreSQL 16, Redis 7; no Docker; Prisma's schema engine could not be downloaded). Stopped after Phase 8.
+
+### 13.2 What was implemented
+
+- **`packages/db`:** models `DocumentSnapshot`, `CommentThread`, `Comment`, enums `SnapshotKind`, `AnchorStatus`, restore-barrier columns on `DocumentState`; migration `20261119120000_comments_versions` (hand-written, with CHECKs and an immutability trigger); `SnapshotStore` (create with contributors, AUTO skip and pruning, state load); `DocumentStore` barrier (`acquireRestoreBarrier`, `releaseRestoreBarrier`, `isRestoring`, `restoreToken` option, `DocumentRestoringError`).
+- **`packages/shared`:** `comments.ts` (REST schemas, page-event schema and channel), new server messages and the `version.create` / `version.restore` command schemas in `collab-protocol.ts`; four new collab settings in `env.ts`.
+- **`apps/api`:** `routes/comments.ts` (CMT-01 … 06), `routes/versions.ts` (VER-01 … 03), `workspaces/page-events.ts` (publisher), six new activity actions.
+- **`apps/collab`:** `versions.ts` (`VersionService`: manual and automatic snapshots, `page.edited` tracking, restore with barrier, gate and delta, anchor re-evaluation, cross-instance catch-up), `page-events.ts` (Redis listener), hooks in `server.ts` (`onStateless` commands, write gate in `beforeHandleMessage`, `onChange`, `beforeUnloadDocument`), a `publish` dependency, a token provider in `persistence.ts`.
+- **`packages/editor`:** `comment-anchors.ts` (anchors, resolution, server-side status, `planRestore`), `comment-highlights.ts` (decorations plugin), content helpers split into `collaboration-content.ts`.
+- **`apps/web`:** `CollabSession` commands, answers and refetch signals; `comments-panel.tsx`, `version-history.tsx` (list, save, read-only preview, restore with confirmation), page editor integration, `useReloadOn`, highlight CSS, API client methods.
+- **Docs:** DATABASE_SCHEMA §15, API_CONTRACTS §16, WEBSOCKET_PROTOCOL §19, ARCHITECTURE §24 (and V10), DECISIONS D62 and D63 (U8, U11 resolved), TESTING §8.0g, IMPLEMENTATION_PLAN status, this section.
+
+### 13.3 Requirements and acceptance criteria
+
+| Item | Result |
+|---|---|
+| AC-8.1 anchors follow content | Passed (editor tests, two real editors, insertions before and inside the range, concurrent edits). Edge: typing exactly at index 0 of a paragraph joins a range that starts at that paragraph's first character (D63). |
+| AC-8.2 Commenter on a read-only connection; Viewer cannot | Passed (API tests for every endpoint; UI test for a read-only Commenter). |
+| AC-8.3 deleted text → detached with quoted text | Passed (editors, bare `Y.Doc`, UI shows the badge and the quote; the server also stores the status after a restore). Detachment caused by ordinary editing is decided live by clients, not stored. |
+| AC-8.4 create and restore only over read-write | Passed (Commenter and Viewer get `FORBIDDEN`; role re-read at command time, tested with a demotion that no event announced). |
+| AC-8.5 restore safety | Passed: PRE_RESTORE committed before anything changes; fault injection at the snapshot, at planning and with an invalid snapshot leaves the document unchanged and the barrier released; snapshots cannot be updated (trigger) and are never deleted by a restore. |
+| AC-8.6 restore convergence across two instances | **Partly met.** Tested: the barrier in PostgreSQL stops the second instance's store and its held edit is stored after release; everything stored by the second instance before the barrier is in the PRE_RESTORE snapshot; the restore reaches a client on the second instance through the `document.restored` event; with one instance, clients converge, writes during the restore are held back and merge after `forceSync`, nothing accepted before the barrier is lost. **Not tested and not possible yet:** ordinary edits made on two instances reaching each other live (Redis document sync is Phase 9), so a second instance's clients keep typing against stale content during the barrier and see the restore only through the event. |
+| AC-8.7 second restore → CONFLICT | Passed (overlapping, and simultaneous requests). |
+| AC-8.8 version endpoints and viewer | Passed (API tests; UI test shows the stored content read-only and leaves the live page untouched). No browser E2E. |
+| AC-8.9 contributors | Passed (DB and collab tests, throttle reset after each snapshot). |
+| AC-8.10 `comments.changed` and refetch after reconnect | Passed (API publishes after commit only; collab relays to the page only; session refetches on event and on every sync). |
+| AC-8.11 U8, U11, V10 | Recorded: U8 and U11 in D63 (activity-log pruning left to Phase 10), V10 in ARCHITECTURE §18. |
+| Part A item 9 (comment notifications "where in scope") | Not in scope in the plan beyond the real-time `comments.changed` signal; no e-mail, mention or in-app notification was built. |
+
+### 13.4 Findings made while implementing
+
+1. Throwing in Hocuspocus `beforeHandleMessage` closes the connection, so the restore gate sets `connection.readOnly` instead (D62).
+2. An update always carries the whole delete set, so "is the delta empty" cannot be read from its size; `planRestore` compares coverage before and after.
+3. The collaboration server's Redis client is lazy and does not queue, so publishing needs an explicit connect (a real bug, found by the cross-instance test).
+4. y-tiptap cannot resolve a character-level relative position at index 0 of a text node (D63, edge).
+5. The editor's sync plugin opens an empty Yjs transaction on every update; reacting to it looped (fixed).
+6. Every transaction of ProseMirror's structural diff keeps unchanged paragraphs, so comment anchors on unchanged text survive a restore: a useful consequence, tested.
+7. Tests that create several rows with the fake clock must advance it: rows with equal `createdAt` are ordered by random id.
+
+### 13.5 What the owner must do first
+
+1. Merge the files, run `pnpm install` (no dependency changes), `pnpm db:migrate:deploy`, `pnpm db:migrate:status`, and the scratch-database drift check (`pnpm db:migrate:dev` against an empty database; **it must produce no new migration**). The migration SQL was written to match Prisma's naming without the schema engine; if the drift check wants changes, regenerate this one migration.
+2. Add the four new settings to `.env` if you keep your own copy (defaults exist): `COLLAB_AUTO_SNAPSHOT_INTERVAL_MS`, `COLLAB_AUTO_SNAPSHOT_KEEP`, `COLLAB_EDIT_ACTIVITY_INTERVAL_MS`, `COLLAB_RESTORE_BARRIER_TTL_MS`.
+3. `pnpm build:packages`, `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test --testTimeout=30000` (expect 61 files, 1077 tests on a machine like the preparation environment).
+
+### 13.6 Known limitations and open items
+
+- AC-8.6 across instances: see §13.3 (Phase 9).
+- Text typed into content that a restore replaced is not shown afterwards (as with any concurrent deletion).
+- Restore and snapshots use memory for extra copies of the document; no size limit yet (Phase 10, PERF-05/06).
+- Comments cannot be edited; no notifications; re-anchoring detached threads by text is not built (U8).
+- A thread deleted by deleting all its comments cannot be restored.
+- Detachment from ordinary editing is shown live but not stored; the API's `anchorStatus` reflects the last restore only.
+- Activity-log pruning is not implemented (U11, Phase 10).
+
+### 13.7 Owner verification checklist
+
+1. Two browsers, two accounts (an Editor and a Commenter) on one page. Select text in the Editor's browser, open **Comments**, comment: the highlight appears in both browsers within a moment. Reply from the Commenter's browser, resolve, reopen.
+2. Type before, inside and after the commented text in the other browser: the highlight stays on the same words and grows only for text typed inside it.
+3. Delete all the commented text: the thread stays, marked "Detached", with its quote.
+4. Log in as a Viewer: comments are readable, no way to add or reply.
+5. Open **Version history**, **Save version** with a name. Keep typing, then open the version: it shows the old content read-only and the live page is unchanged.
+6. In the Editor's browser restore that version and confirm: both browsers show the old content; a "Before a restore" entry exists with the content that was replaced; view it and restore it to undo.
+7. While one browser restores, type in the other: typing pauses with a notice and resumes after; refresh both: the same content.
+8. Stop the collab server during a page edit session and start it: nothing lost; versions still listed.
+9. Check the database: `UPDATE document_snapshots SET label='x'` fails.
+
+### 13.8 Execution results (preparation environment, 2026-11-19)
+
+Baseline 55 files / 966 tests (137 s); after: **61 files / 1077 tests passed (172 s)**, `--testTimeout=30000`; `eslint apps packages` clean; `tsc --noEmit` clean in all packages (`pnpm typecheck`); `prettier --check apps packages` clean. A first full run had one failure, a test of mine that depended on two rows having different timestamps (fixed); the second full run was clean. Not run: browsers, Docker, Node 24, `migrate deploy`, the drift check.
+
+### 13.9 Suggested commit message
+
+```
+feat: Phase 8 – comments and version history
+
+- db: DocumentSnapshot, CommentThread, Comment, SnapshotKind, AnchorStatus;
+  restore barrier columns on document_states; SnapshotStore; DocumentStore
+  barrier (token, expiry, DocumentRestoringError); immutable snapshots
+  (trigger), CHECKs; migration 20261119120000_comments_versions
+- api: CMT-01..06 threads/replies/resolve/reopen/delete, VER-01..03 list,
+  detail and binary state; comments.changed page event after commit
+- collab: VersionService – manual and automatic snapshots, contributors via
+  page.edited, restore as one Yjs transaction behind a PostgreSQL barrier,
+  in-process write gate, PRE_RESTORE snapshot, anchor re-evaluation,
+  cross-instance catch-up; Redis page-event listener; version.* commands
+- editor: comment anchors (Yjs relative positions), highlight decorations,
+  planRestore (structural diff delta, applied atomically)
+- web: comments panel, version history with read-only preview and restore,
+  editor paused during a restore, refetch on events and reconnect
+- shared: comment/version schemas, new server messages, page-event schema,
+  four collab settings
+- test: 111 new tests (api, db, editor, collab integration, web); 61 files,
+  1077 tests passing
+- docs: DATABASE_SCHEMA §15, API_CONTRACTS §16, WEBSOCKET_PROTOCOL §19,
+  ARCHITECTURE §24, DECISIONS D62/D63 (U8, U11, V10), TESTING §8.0g,
+  HANDOVER §13
+```
+
+### 13.10 Change log (Phase 8)
+
+New: `packages/db/src/snapshots.ts`, migration `20261119120000_comments_versions`, `packages/db/test/versions.int.test.ts`; `packages/shared/src/comments.ts`; `apps/api/src/routes/comments.ts`, `routes/versions.ts`, `workspaces/page-events.ts`, `test/comments.int.test.ts`, `test/versions.int.test.ts`; `apps/collab/src/versions.ts`, `page-events.ts`, `test/versions.int.test.ts`; `packages/editor/src/comment-anchors.ts`, `comment-highlights.ts`, `collaboration-content.ts`, `comment-anchors.test.ts`; `apps/web/src/components/editor/comments-panel.tsx`, `version-history.tsx`, `comments-versions.test.tsx`.
+Changed: `packages/db` (schema, document store, index), `packages/shared` (protocol, env, index), `apps/api` (route registration, activity), `apps/collab` (server, persistence, config, dependencies, harness), `packages/editor/src/collaboration.ts`, `apps/web` (collab session and test, API client, page editor and test, page view, use-load, CSS), `.env.example`, and the docs listed in §13.2.
+
+2026-11-20: Phase 8 verified on the owner's machine (§13.11); one test corrected (`apps/collab/test/versions.int.test.ts`, a test-ordering bug, no code change); D62 and D63 accepted; ARCHITECTURE, DECISIONS, IMPLEMENTATION_PLAN, PROJECT_MASTER, TESTING, WEBSOCKET_PROTOCOL, API_CONTRACTS and this file updated.
+
+### 13.11 Owner verification (2026-11-20)
+
+**Environment:** the owner's Windows machine (Git Bash), PostgreSQL 17 and Redis 7 from Compose (`pnpm infra:up`, PostgreSQL on host port 5433); pnpm 12.18.0, Vitest 5.1.0, Prisma 7.10.1. The Node version and browser names and versions were not recorded in this session.
+
+| Step | Result |
+|---|---|
+| `pnpm infra:up`, `pnpm install` | Redis and PostgreSQL healthy; install already up to date |
+| `pnpm db:migrate:deploy`, `pnpm db:migrate:status` | 6 migrations found; `20261119120000_comments_versions` applied; "Database schema is up to date!" (the Prisma CLI printed an update notice for 8.0.0-rc.34; not applied) |
+| Scratch-database drift check (`pnpm db:migrate:dev` against an empty `conote_scratch`) | The scratch database from an earlier phase already existed, so it was dropped and created again. All 6 migrations applied from empty; "Your database is now in sync with your schema"; **no new migration was proposed**, so the hand-written SQL matches `schema.prisma`. `git status` showed only the not yet committed Phase 8 migration folder |
+| `pnpm build:packages`, `pnpm lint`, `pnpm format:check`, `pnpm typecheck` | Passed (owner-reported; whether `format:check` still lists `infra/docker-compose.yml` was not recorded) |
+| `pnpm test --testTimeout=30000`, first full run | **61 files, 1076 of 1077 tests passed, 265.11 s.** The failure: `apps/collab/test/versions.int.test.ts` > "the barrier across collaboration instances (D62, AC-8.6)" > "stops a second instance storing while the restore runs, and lets it store afterwards: nothing is lost"; line 589, `expect(await new DocumentStore(first.prisma).isRestoring(pageId)).toBe(true)` received `false` |
+| That file alone (26 of 27 passed), that test alone | Failed every time: deterministic, so not the load problem seen in Phase 6 and 7 |
+| Cause | **A test-ordering bug, not a defect in the code.** `VersionService.isRestoring()` reports the in-process gate, which `restore()` raises synchronously at its start, before the PostgreSQL barrier is acquired (after the awaited role check and the awaited load of the snapshot). The test read the database barrier immediately after the gate went up. The order in the code (gate first) is the intended, conservative one (D62) |
+| Fix (test only) | In `apps/collab/test/versions.int.test.ts` the test waits for the gate and then for the barrier in PostgreSQL (`until(async () => await store.isRestoring(pageId), 'barrier up in PostgreSQL')`) before asserting. The file then passed **27 of 27** (16.92 s). The `DocumentRestoringError` lines on stderr are the second instance's refused stores, which this test expects |
+| §13.7 items 1–4 (comments) | Two browsers (Editor and Commenter) plus a Viewer: create from a selection, highlight in both browsers, reply, resolve, reopen; highlight stays on the same words when text is typed before, inside and after; deleting all the commented text leaves the thread marked detached with its quote; Viewer can read but not add or reply. Reported as working |
+| §13.7 items 5–9 (versions) | Save version; read-only view of an old version with the live page unchanged; restore, with a "Before a restore" entry created and used to undo; typing in the other browser during a restore (paused with a notice, then resumed; both browsers identical after a refresh); collaboration-server restart without losing content or versions; `UPDATE document_snapshots SET label='x'` rejected. Reported as working |
+
+The browser checks were reported per group ("all worked", "everything passes"); no per-step detail, screenshots or timings were recorded.
+
+**Decisions:** D62 and D63 accepted by the owner on 2026-11-20 (U8 and U11 resolved as recorded in D63).
+
+**Files that must be part of the commit:** the new migration folder `packages/db/prisma/migrations/20261119120000_comments_versions/` (untracked when the drift check ran) and the corrected `apps/collab/test/versions.int.test.ts`.
+
+**Still not verified:** a full-suite run after the test fix (1077 of 1077 expected; the known flaky Phase 6 test in `sync.int.test.ts` did not fail in this run but may fail under load); Docker `apps` profile; GitHub Actions; two collaboration instances in real browsers, that is live convergence of ordinary edits across instances (Phase 9, AC-8.6); more than two concurrent users; restore of very large documents (Phase 10); automated browser E2E (Playwright).

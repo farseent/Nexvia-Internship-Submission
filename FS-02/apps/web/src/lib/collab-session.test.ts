@@ -20,6 +20,7 @@ const { providers, FakeProvider, FakeSocket } = vi.hoisted(() => {
     hasUnsyncedChanges = false;
     destroyed = false;
     forceSync = vi.fn();
+    sendStateless = vi.fn();
     attach = vi.fn();
     configuration: { websocketProvider: { destroy: () => void } };
     constructor(readonly config: FakeConfig) {
@@ -291,5 +292,157 @@ describe('subscription', () => {
     const count = seen.length;
     latest().config.onSynced();
     expect(seen).toHaveLength(count);
+  });
+});
+
+describe('version history commands and events (Phase 8, WEBSOCKET_PROTOCOL §7, §8)', () => {
+  async function live() {
+    const session = make(async () => info());
+    session.start();
+    await flush();
+    latest().config.onSynced();
+    return session;
+  }
+  const send = (payload: Parameters<typeof encodeServerMessage>[0]) =>
+    latest().config.onStateless({ payload: encodeServerMessage(payload) });
+  const lastCommand = () => {
+    const calls = latest().sendStateless.mock.calls;
+    return JSON.parse(calls[calls.length - 1]![0] as string) as {
+      v: number;
+      type: string;
+      id: string;
+      payload: Record<string, unknown>;
+    };
+  };
+  const VERSION = '9d0c3a2f-4e1b-4c11-8f5b-6f1f0a2e8a39';
+  const PRE = '4a3b2c1d-0e9f-4a8b-9c7d-6e5f4a3b2c1d';
+  const USER = '0b1b6a8e-3a52-4c1d-8a49-2b8a4f3d1e02';
+
+  it('createVersion sends a version.create command and resolves with the answer', async () => {
+    const session = await live();
+    const result = session.createVersion('First draft');
+    const command = lastCommand();
+    expect(command).toMatchObject({
+      v: 1,
+      type: 'version.create',
+      payload: { label: 'First draft' },
+    });
+    send({
+      v: 1,
+      type: 'response',
+      replyTo: command.id,
+      payload: { ok: true, result: { versionId: VERSION } },
+    });
+    expect(await result).toEqual({ ok: true, result: { versionId: VERSION } });
+  });
+
+  it('createVersion without a label sends an empty payload', async () => {
+    const session = await live();
+    void session.createVersion();
+    expect(lastCommand().payload).toEqual({});
+  });
+
+  it('resolves a refused command with the server’s code and message', async () => {
+    const session = await live();
+    const result = session.restoreVersion(VERSION);
+    const command = lastCommand();
+    expect(command).toMatchObject({ type: 'version.restore', payload: { versionId: VERSION } });
+    send({
+      v: 1,
+      type: 'error',
+      replyTo: command.id,
+      payload: { code: 'FORBIDDEN', message: 'No.' },
+    });
+    expect(await result).toEqual({ ok: false, code: 'FORBIDDEN', message: 'No.' });
+  });
+
+  it('keeps answers apart: two commands in flight each get their own', async () => {
+    const session = await live();
+    const first = session.createVersion('a');
+    const firstId = lastCommand().id;
+    const second = session.createVersion('b');
+    const secondId = lastCommand().id;
+    send({
+      v: 1,
+      type: 'error',
+      replyTo: secondId,
+      payload: { code: 'CONFLICT', message: 'busy' },
+    });
+    send({ v: 1, type: 'response', replyTo: firstId, payload: { ok: true } });
+    expect(await first).toMatchObject({ ok: true });
+    expect(await second).toMatchObject({ ok: false, code: 'CONFLICT' });
+  });
+
+  it('does not send while not connected, and says so', async () => {
+    const session = make(async () => info());
+    session.start();
+    await flush(); // connecting, not live
+    expect(await session.createVersion()).toMatchObject({ ok: false, code: 'NOT_CONNECTED' });
+    expect(latest().sendStateless).not.toHaveBeenCalled();
+  });
+
+  it('fails commands still waiting when the session is destroyed', async () => {
+    const session = await live();
+    const result = session.createVersion();
+    session.destroy();
+    expect(await result).toMatchObject({ ok: false, code: 'NOT_CONNECTED' });
+  });
+
+  it('holds the editor while a restore runs, then resynchronizes so refused edits are sent again', async () => {
+    const session = await live();
+    const provider = latest();
+    send({ v: 1, type: 'version.restore.started', payload: { restoredBy: USER } });
+    expect(session.getState().restoring).toBe(true);
+    const before = session.getState();
+    send({
+      v: 1,
+      type: 'version.restored',
+      payload: { versionId: VERSION, preRestoreVersionId: PRE, restoredBy: USER },
+    });
+    const after = session.getState();
+    expect(after.restoring).toBe(false);
+    expect(provider.forceSync).toHaveBeenCalledTimes(1);
+    expect(after.versionsTick).toBe(before.versionsTick + 1);
+    expect(after.commentsTick).toBe(before.commentsTick + 1);
+  });
+
+  it('a failed restore releases the editor, resynchronizes and shows the reason', async () => {
+    const session = await live();
+    send({ v: 1, type: 'version.restore.started', payload: { restoredBy: USER } });
+    send({
+      v: 1,
+      type: 'version.restore.failed',
+      payload: { reason: 'The version could not be restored. The page was not changed.' },
+    });
+    expect(session.getState()).toMatchObject({
+      restoring: false,
+      restoreError: 'The version could not be restored. The page was not changed.',
+    });
+    expect(latest().forceSync).toHaveBeenCalled();
+    send({ v: 1, type: 'version.restore.started', payload: { restoredBy: USER } });
+    expect(session.getState().restoreError).toBeNull();
+  });
+
+  it('refetch signals: comments.changed, version.created, and every (re)synchronization', async () => {
+    const session = await live();
+    const base = session.getState();
+    send({ v: 1, type: 'comments.changed', payload: { pageId: PAGE } });
+    expect(session.getState().commentsTick).toBe(base.commentsTick + 1);
+    send({
+      v: 1,
+      type: 'version.created',
+      payload: { versionId: VERSION, kind: 'AUTO', label: null, createdBy: null },
+    });
+    expect(session.getState().versionsTick).toBe(base.versionsTick + 1);
+    latest().config.onSynced(); // a reconnection: events may have been missed (D14)
+    expect(session.getState().commentsTick).toBe(base.commentsTick + 2);
+  });
+
+  it('ignores an answer nobody is waiting for', async () => {
+    const session = await live();
+    expect(() =>
+      send({ v: 1, type: 'response', replyTo: 'unknown', payload: { ok: true } }),
+    ).not.toThrow();
+    expect(session.getState().phase).toBe('live');
   });
 });

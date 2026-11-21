@@ -1,7 +1,7 @@
 # CoNote – Testing Strategy
 
 **Status:** Phase 1a test foundation (reported passing by the owner: 9 files, 59 tests) plus **Phase 2 authentication tests, run by Claude in a preparation environment: 17 files, 228 tests passed (115 unit + 113 integration), twice in a row** (§8.0a). The Phase 1b spike harness is under `spikes/collab-poc/`. **Phase 3 tests were run by the owner on 2026-11-15 against PostgreSQL and Redis: `pnpm check` passed with 482 tests** (§8.0b). **Phase 5 (Yjs integration) tests were run by the owner on 2026-11-16: 43 files, 802 tests passed on Node 24.18.0 and PostgreSQL 17** (§8.0d). There is no network collaboration yet (Phase 6), so no collaboration test runs through a server or a browser. **Browser E2E (Playwright) is not implemented.**
-**Last updated:** 2026-11-20 (Phase 8 tests added: §8.0g; owner verification of Phase 8 recorded in §8.0g)
+**Last updated:** 2026-11-21 (owner verification of Phase 9 recorded in §8.0e (Phase 9); Phase 8 tests added: §8.0g; owner verification of Phase 8 recorded in §8.0g)
 
 Decision IDs (`D#`, `U#`) are in [DECISIONS.md](DECISIONS.md); requirements and metrics (`FR-*`, `NFR-*`, `PERF-*`) in [PROJECT_MASTER.md](PROJECT_MASTER.md); guarantees `G1`–`G7` in [ARCHITECTURE.md](ARCHITECTURE.md) §8; phases and acceptance criteria (`AC-*`) in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
@@ -97,7 +97,7 @@ For each endpoint id in API_CONTRACTS.md: success path; each documented error co
 4. After quiescence all replicas are compared: equal **state vectors** and equal **document JSON** (and equal persisted content after a store).
 5. On failure, the test prints the seed and the minimal reproducing operation log (shrinking is attempted).
 
-Variants: in-process replicas (fast, many iterations); through the real collab server with N clients; with a mid-run server restart; with simultaneous restore (Phase 8); with multiple instances (Phase 9). Redis outage tests must disconnect one instance, publish updates from the other, reconnect Redis, and prove the selected recovery mechanism detects and repairs stale state; a Redis restart alone is not a passing reconvergence test.
+Variants: in-process replicas (fast, many iterations); through the real collab server with N clients; with a mid-run server restart; with simultaneous restore (Phase 8); with multiple instances (Phase 9, done: TESTING §8.0e). Redis outage tests must disconnect one instance, publish updates from the other, reconnect Redis, and prove the selected recovery mechanism detects and repairs stale state; a Redis restart alone is not a passing reconvergence test.
 
 ### 5.6 Multi-browser tests (`MB`)
 
@@ -289,6 +289,52 @@ Run locally by the owner (Windows, Git Bash, Node 24.18.0, pnpm 12.18.0, Postgre
 
 **Still not covered:** automated browser end-to-end tests (Playwright), screen-reader checks, mobile soft-keyboard and IME behaviour, Docker (the `apps` profile needs a volume for `ASSET_STORAGE_DIR`), GitHub Actions, S3-compatible storage.
 
+### 8.0e Phase 9 tests and measurements (written and run by Claude, preparation environment, 2026-11-21; owner-verified on the owner's machine, 2026-11-21)
+
+**Environment:** one virtual CPU, 4 GB, Linux, Node v22.23.5, PostgreSQL 16.15, Redis 7.0.15, pnpm 12.18.0 (not the owner's Windows / Node 24 / PostgreSQL 17 setup). PostgreSQL and Redis ran on the same machine as the collab instances; migrations were applied with `psql` because the Prisma engine download is blocked in this environment (as in earlier phases).
+
+**New automated tests (40, all passing in the final full run):**
+
+| File | Tests | Covers |
+|---|---|---|
+| `apps/collab/test/cluster.int.test.ts` | 14 | AC-9.1, 9.2, 9.3, 9.9 (loops): propagation both ways; late joiner; peer handshake with an unstored change; 3 instances / 6 clients under 150 seeded random edits (seed 20261121, identical text and state vectors, PostgreSQL agrees); presence across instances, identity forgery, presence of a killed instance (35 s test); message count bounded and stopping (7 Redis messages for one edit across 3 instances); no duplicated content; replicated store writes no extra row; crash with and without replicated stores; rebuild from PostgreSQL after all instances restarted |
+| `apps/collab/test/cluster-failure.int.test.ts` | 10 | AC-9.4, 9.6, 9.8: Redis cut with a TCP proxy; reconnect alone insufficient; automatic recovery in both directions; document opened during an outage; start without Redis; shutdown without Redis; periodic check without any Redis event; the G3 loss window recorded; per-instance connection limit; heartbeat; rolling restart behind a load balancer (4 clients, 65 edits, both instances restarted) |
+| `apps/collab/test/cluster-access.int.test.ts` | 4 | AC-9.5: a removed member cut off on both instances; downgrade read-only on the holding instance, writes reach nobody; deleted page closes both; periodic revalidation on each instance with no event |
+| `packages/db/test/document-store.int.test.ts` | +5 | `persistedVectors`; `skipIfUnchanged` (already stored, never stored, new content, deletion, concurrent stores write one row) |
+| `packages/shared/src/yjs.test.ts`, `shared.test.ts` | +4, +3 | `storedAheadOfLive`; the new `COLLAB_CLUSTER_*` settings |
+
+**Test infrastructure added:** `Cluster` (several real collab servers sharing PostgreSQL, keys and a Redis prefix), `RedisProxy` (cut and restore the network between one instance and Redis), `RoundRobinProxy` (a load balancer), `Harness.crash()` (an instance that disappears without storing or announcing anything), seeded random edits (`seededRandom`).
+
+**Results of the last runs:** full workspace run at the end: **64 files, 1,117 tests passed (baseline 1,077), 261 s.** An earlier full run had 63 files and 1,113 tests. `eslint .` over the whole repository and `tsc --noEmit` for `apps/collab` were clean; `prettier --check .` fails only on `infra/docker-compose.yml` (pre-existing, recorded in Phase 8).
+
+**Defects the tests found (all fixed):** (1) shutting an instance down while Redis was unreachable threw from the extension's `onDestroy`; (2) with Redis down at startup the event subscribers waited without limit, so `start()` never returned (this defect predates Phase 9); (3) unloading a document while Redis was down printed an error per document and left its channel subscribed; (4) the instance-crash presence test first passed in 0.3 s because the simulated crash still announced departures; it now cuts Redis first and shows the real 34 s expiry; (5) a first version of the loop test did not subscribe to the reply channels and under-counted messages; (6) a replicated-store test asserted a fast-path count that races the origin's own store, so it asserts the invariant (no extra row, no write) instead.
+
+**Acceptance criteria (IMPLEMENTATION_PLAN, Phase 9):**
+
+| AC | Status | Evidence |
+|---|---|---|
+| 9.1 convergence, 2 then 3 instances | **Met** in the tests above (3 instances, 6 clients, seeded random edits) | `cluster.int.test.ts` |
+| 9.2 awareness across instances | **Met in tests** (identity, cursor field, removal on leaving, forged identity). Not checked in real browsers | `cluster.int.test.ts` |
+| 9.3 persistence across instances; recovery after killing an instance | **Met in tests**: PostgreSQL holds committed content through kills, restarts and replicated stores; G2/G4 not re-proved beyond these runs | `cluster.int.test.ts`, benchmark `recovery-instance` |
+| 9.4 Redis outage | **Met** including "reconnect alone is insufficient" and the G3 loss window | `cluster-failure.int.test.ts` |
+| 9.5 access events and revalidation across instances | **Met in tests** for removal, downgrade, page deletion, and timer-only revalidation. Session-revocation and workspace-deleted events were not repeated across instances (same code path, not tested) | `cluster-access.int.test.ts` |
+| 9.6 limits and heartbeat | **Met in tests**: per-instance connection limit (total), heartbeat. The per-user limit is the Phase 6 test on one instance; a global per-user limit does not exist | `cluster-failure.int.test.ts`, `abuse.int.test.ts` |
+| 9.7 PERF-01…07 measured | **Partly met.** All seven were measured once, but PERF-02 did not reach a limit, most runs were single runs, PERF-07 is in-process, and the machine has one core. Observed values are in PERFORMANCE.md; they are **not** proposed as targets because the environment cannot support targets | PERFORMANCE.md |
+| 9.8 rolling restart | **Met in test** (2 instances, 4 clients) and benchmark (SIGKILL, 8 clients, 0 of 73 edits lost) | both |
+| 9.9 sticky-routing evaluation | **Evaluated with measured evidence and a recommendation** (D67); not built | PERFORMANCE §8 |
+
+**Not tested (do not read these as passed):** real browsers; Docker `apps` profile and GitHub Actions; the owner's platform; more than three instances; a real network or balancer; TLS to Redis; Redis Cluster/Sentinel; Redis memory limits and eviction; session-revoked / workspace-deleted events across instances; long soak runs; load above 1,000 connections or 20 changes per second per document; the `server.shutting_down` time with many documents; the Redis recovery with thousands of open documents (the per-document cost of the resynchronization pass was not measured).
+
+#### Owner verification on the owner's machine (2026-11-21)
+
+Full record: HANDOVER §14.9. On the owner's Windows machine (Git Bash; PostgreSQL 17 and Redis 7 from Compose; pnpm 12.18.0, Vitest 5.1.0, Prisma 7.10.1; Node version and browsers not recorded): install, package build, lint, format check and typecheck passed (the format check was fully clean). `pnpm test --testTimeout=30000` ran **64 files, 1,116 of 1,117 tests passed, 317.19 s.**
+
+- **The failing test:** `cluster.int.test.ts` > "no message loops and no duplicate processing (AC-9.9)" > "one edit produces a bounded number of Redis messages that stops once the instances agree". It counts Redis messages after the instances agree, waits one second and expects the count not to change. It failed in the full run (10 then 15), and in three runs of the file alone (7 then 10; 13 then 27; 7 then 30), always with a different count. The other 13 tests of the file passed every time. Run alone with `-t "one edit produces"`, the test passed twice (2.4 s).
+- **Reading of the result:** the test is order-dependent. The counter subscribes to every channel under the cluster prefix and the tests share one cluster, so traffic left by earlier tests is the likely source of the late messages. A real message loop is not supported by the evidence (the test passes alone and the exactly-once test passes), but the cause was **not confirmed**: printing the channel and time of each late message was suggested and not run. **The test is not yet a reliable proof of AC-9.9 (no loops) and should be changed to count only its own page's channel, or to wait for earlier clients to close, before Phase 10.** The expected full-suite result after that change is 1,117 of 1,117.
+- **Manual checks in real browsers** (HANDOVER §14.7 items 2–4), reported as working: two collaboration instances on ports 4100 and 4101 (`cluster: "connected"` in both logs), the API's `COLLAB_URL` switched between them so that each browser used a different instance, live text and carets in both directions; Redis stopped for about ten seconds while both browsers typed, with all text present in both after Redis returned and no reload; one instance stopped while typing. Not recorded: the log lines `redis unavailable` and `redis is back`, the time to convergence, and whether the browser reconnected on its own after the instance stopped.
+
+**Update to the "Not tested" list above:** real browsers (two instances, Redis outage, stop of one instance) and the owner's platform are now covered by the manual run. **Still not tested:** Docker `apps` profile and GitHub Actions; more than two instances in browsers; a real network or balancer; TLS to Redis; Redis Cluster/Sentinel; Redis memory limits and eviction; long soak runs; load; any multi-core run; an automated browser E2E.
+
 ### 8.1 Requirements
 
 | Requirement group | Primary categories | Phase |
@@ -343,7 +389,7 @@ GitHub Actions is the configured and owner-reported passing CI provider. The cur
 
 ## 10. Recording results
 
-- Measured results go in dated records under `docs/` (spike results in `docs/spikes/`, load results alongside TESTING.md or a `docs/results/` folder created in Phase 9), with the environment details from §7.
+- Measured results go in dated records under `docs/` (spike results in `docs/spikes/`, load results in `docs/PERFORMANCE.md` with raw files in `docs/benchmarks/`, created in Phase 9), with the environment details from §7.
 - HANDOVER.md lists, per phase, the acceptance criteria and the test ids that satisfy them.
 - A test that is skipped, flaky or deleted must have a recorded reason and owner; flaky tests are fixed or quarantined within the phase, never silently retried.
 - Coverage is reported for information; gating thresholds are decided in Phase 10.

@@ -9,6 +9,7 @@ import {
   isEmptyYjsUpdate,
   mergeStateVectors,
   stateVectorCovers,
+  storedAheadOfLive,
   stateVectorsEqual,
   synchronizeReplicas as synchronizeReplicaPair,
 } from './yjs.js';
@@ -559,4 +560,42 @@ describe('randomized convergence', () => {
       expectConverged(peers, `seed ${seed}`);
     },
   );
+});
+
+describe('storedAheadOfLive (D64 stale-document detection)', () => {
+  const docWith = (client: number, text: string): Y.Doc => {
+    const doc = new Y.Doc();
+    doc.clientID = client;
+    doc.getText('t').insert(0, text);
+    return doc;
+  };
+
+  it('is false when the live document has everything that is stored', () => {
+    const doc = docWith(1, 'abc');
+    expect(storedAheadOfLive(Y.encodeStateVector(doc), Y.encodeStateVector(doc))).toBe(false);
+  });
+
+  it('is false when the live document has more than is stored (an unstored change)', () => {
+    const stored = docWith(1, 'abc');
+    const live = new Y.Doc();
+    Y.applyUpdate(live, Y.encodeStateAsUpdate(stored));
+    live.getText('t').insert(3, 'more');
+    expect(storedAheadOfLive(Y.encodeStateVector(stored), Y.encodeStateVector(live))).toBe(false);
+  });
+
+  it('is true when a client has a clock in storage that the live document lacks', () => {
+    const live = docWith(1, 'abc');
+    const stored = new Y.Doc();
+    Y.applyUpdate(stored, Y.encodeStateAsUpdate(live));
+    const other = docWith(2, 'xyz');
+    Y.applyUpdate(stored, Y.encodeStateAsUpdate(other));
+    expect(storedAheadOfLive(Y.encodeStateVector(stored), Y.encodeStateVector(live))).toBe(true);
+  });
+
+  it('is true when only one client is behind, even if another is ahead (diverged replicas)', () => {
+    const live = docWith(1, 'abcdef');
+    const stored = new Y.Doc();
+    Y.applyUpdate(stored, Y.encodeStateAsUpdate(docWith(2, 'xyz')));
+    expect(storedAheadOfLive(Y.encodeStateVector(stored), Y.encodeStateVector(live))).toBe(true);
+  });
 });

@@ -51,6 +51,8 @@ export interface HarnessOptions {
   clock?: () => Date;
   /** Fault injection for version history tests (Phase 8). */
   versionHooks?: VersionHooks;
+  /** Redis URL this instance's collab server uses (a proxy in outage tests); the helper client always uses the real one. */
+  redisUrl?: string;
 }
 
 /** A running collaboration server against the real PostgreSQL and Redis, plus seeding helpers. */
@@ -80,7 +82,10 @@ export class Harness {
     const infra = requireInfraEnv();
     const keys = options.keys ?? generateKeys();
     const logger = pino({ level: 'silent' });
-    const dependencies = createDependencies(infra, logger);
+    const dependencies = createDependencies(
+      options.redisUrl === undefined ? infra : { ...infra, REDIS_URL: options.redisUrl },
+      logger,
+    );
     const config: CollabConfig = {
       port: 0,
       address: '127.0.0.1',
@@ -101,6 +106,18 @@ export class Harness {
       autoSnapshotKeep: 50,
       editActivityIntervalMs: 3_600_000,
       restoreBarrierTtlMs: 30_000,
+      connectionTimeoutMs: 60_000,
+      // Off unless a test is about the cluster, so other suites never share Redis channels.
+      cluster: {
+        enabled: false,
+        instanceId: `test-${randomUUID().slice(0, 6)}`,
+        prefix: `conote-test:${randomUUID().slice(0, 8)}`,
+        initialSyncTimeoutMs: 500,
+        resyncIntervalMs: 0,
+        resyncOnReconnect: true,
+        storeReplicated: true,
+        disconnectDelayMs: 50,
+      },
       ...options.config,
     };
     const collab = buildCollabServer({
@@ -265,9 +282,25 @@ export class Harness {
     await this.redis.publish(ACCESS_EVENTS_CHANNEL, JSON.stringify(payload));
   }
 
+  private crashed = false;
+
   async stop(): Promise<void> {
     await Promise.allSettled(this.clients.map((client) => client.destroy()));
-    await this.collab.stop();
+    if (!this.crashed) await this.collab.stop();
+  }
+
+  /**
+   * End the instance the way `kill -9` would: nothing is stored on the way out and no client is
+   * told. (The process disappears; here its sockets are torn down and its stores are swallowed.)
+   */
+  async crash(): Promise<void> {
+    this.crashed = true;
+    const { persistence, revalidation, events, pageEvents, server } = this.collab;
+    persistence.persist = async () => undefined;
+    revalidation.stop();
+    await events.stop();
+    await pageEvents.stop();
+    await Promise.race([server.destroy(), new Promise((resolve) => setTimeout(resolve, 3_000))]);
   }
 
   async cleanup(): Promise<void> {

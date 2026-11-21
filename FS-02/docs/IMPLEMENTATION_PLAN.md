@@ -411,6 +411,8 @@ AC-1.8 is met at spike level. AC-1.9 remains partial pending item-by-item review
 
 ## Phase 9 – Redis Scaling and Performance
 
+**Status (2026-11-21):** implemented and executed in a preparation environment (HANDOVER §14): ACs 9.1–9.6 and 9.8 met in tests, AC-9.9 evaluated (D67, not built), **AC-9.7 only partly met** (one core, mostly single runs, PERF-02 reached no limit). **Owner-verified locally on 2026-11-21 (HANDOVER §14.9):** build, lint, format check and typecheck passed; 1,116 of 1,117 tests passed (the exception is the message-count test in `cluster.int.test.ts`, which fails inside the full file but passes alone; cause not confirmed, to be fixed before Phase 10); two collaboration instances in real browsers, a Redis outage and the stop of one instance reported working. Decisions D64–D67 accepted by the owner. Still open: that test, the owner's decision on PERFORMANCE §0 (a run on the owner's hardware), Docker `apps` profile and GitHub Actions.
+
 **Objectives:** Run multiple collab instances correctly; measure performance; add connection management.
 
 **Scope:** FR-SC-01, FR-SC-03, FR-SC-04, FR-PM-04 (multi-instance); performance baselines for PERF-01 … PERF-07.

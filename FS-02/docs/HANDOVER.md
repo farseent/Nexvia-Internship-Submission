@@ -1,6 +1,8 @@
 # CoNote – Handover
 
-**Last updated:** 2026-11-20 (**Phase 8 implemented and executed in a preparation environment on 2026-11-19 (61 files, 1077 tests passing there, §13) and owner-verified locally on 2026-11-20 (§13.11): migration deploy and drift check clean, build, lint, format check and typecheck passed, one deterministic test failure traced to a test-ordering bug and fixed, comments and version history checked in two real browsers; D62 and D63 accepted.** **Phase 7 owner-verified locally on 2026-11-19 (§12.11) and D61 accepted; Phase 7 implemented 2026-11-18, see the Phase 7 paragraph below. Phase 6 implemented 2026-11-17, executed in a preparation environment, and verified on the owner's machine on 2026-11-18 (§11.11): install, lint, format check, typecheck, 878 tests and a manual real-browser walkthrough passed; D58–D60 accepted**). Earlier: 2026-11-17 (Phase 6 implemented and executed in a preparation environment only); 2026-11-16 (Phase 5 implemented, executed in a preparation environment and verified on the owner's machine; D57 accepted; Phase 4 accepted by the owner on 2026-11-16 — the older "final acceptance pending" wording below is superseded)
+**Last updated:** 2026-11-21 (**Phase 9 implemented and executed in a preparation environment on 2026-11-21 (64 files, 1,117 tests passing there, §14) and owner-verified locally on the same day (§14.9): build, lint, format check and typecheck passed; 1,116 of 1,117 tests passed, the one failure being the message-count test of the "no message loops" group, which fails inside the full file but passes alone; two collaboration instances checked in real browsers, a Redis outage and the stop of one instance survived; D64–D67 accepted.** Previously: 2026-11-20 (**Phase 8 implemented and executed in a preparation environment on 2026-11-19 (61 files, 1077 tests passing there, §13) and owner-verified locally on 2026-11-20 (§13.11): migration deploy and drift check clean, build, lint, format check and typecheck passed, one deterministic test failure traced to a test-ordering bug and fixed, comments and version history checked in two real browsers; D62 and D63 accepted.** **Phase 7 owner-verified locally on 2026-11-19 (§12.11) and D61 accepted; Phase 7 implemented 2026-11-18, see the Phase 7 paragraph below. Phase 6 implemented 2026-11-17, executed in a preparation environment, and verified on the owner's machine on 2026-11-18 (§11.11): install, lint, format check, typecheck, 878 tests and a manual real-browser walkthrough passed; D58–D60 accepted**). Earlier: 2026-11-17 (Phase 6 implemented and executed in a preparation environment only); 2026-11-16 (Phase 5 implemented, executed in a preparation environment and verified on the owner's machine; D57 accepted; Phase 4 accepted by the owner on 2026-11-16 — the older "final acceptance pending" wording below is superseded))
+
+**Phase 9 (2026-11-21):** Redis Scaling and Performance is implemented and was executed in a preparation environment (§14): several collab instances now share documents and presence through the Hocuspocus Redis extension wrapped in `ClusterSync`, with an explicit recovery after Redis outages (U13, D64), replicated stores (D65), Redis-independence rules (D66) and a sticky-routing evaluation (D67). **Final run in the preparation environment: 64 test files, 1,117 tests passed (baseline 1,077; 40 new), 261 s; repository-wide `eslint` and the `apps/collab` typecheck clean; `prettier --check` fails only on `infra/docker-compose.yml`, as before.** Benchmarks are in `docs/PERFORMANCE.md` and were taken on **one virtual CPU shared by every component**, so they are not capacity figures. **Owner-verified locally on 2026-11-21 (§14.9); D64–D67 accepted by the owner.** Two defects were found and fixed along the way, one of which predates Phase 9 (the collab server never finished starting if Redis was down).
 
 **Phase 8 (2026-11-19):** Comments and Version History is implemented and was executed in a preparation environment (§13.8): 61 files, 1077 tests passing there (baseline 966), lint, typecheck and format clean (the repository-wide format check still fails only on `infra/docker-compose.yml`). **Verified on the owner's machine and in real browsers on 2026-11-20 (§13.11): `migrate deploy`, `migrate status` and the scratch-database drift check are clean, and the owner checklist (§13.7) worked. D62 and D63 were accepted on 2026-11-20.** Not done: a full-suite rerun after the test fix, Docker, GitHub Actions, two collab instances in real browsers (Phase 9). AC-8.6 is met for one instance and for the persistence barrier across two; live convergence of ordinary edits across instances waits for Phase 9 (§13.3). Stop after Phase 8, as instructed.
 
@@ -18,7 +20,7 @@
 
 **Next step (2026-11-19, superseded by the paragraph below):** the owner records final acceptance of Phase 7 (and the earlier open sign-offs, Phases 2–6); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–7 changes (the lockfile changes have not run on a clean runner); optionally makes the flaky Phase 6 test wait for its counter (§12.11); then Phase 8 – Comments and Version History.
 
-**Next step (current, 2026-11-20):** the owner commits the Phase 8 files (the new migration folder `packages/db/prisma/migrations/20261119120000_comments_versions/` and the corrected `apps/collab/test/versions.int.test.ts` must be part of the commit) and runs the full suite once more (1077 of 1077 expected; the known flaky Phase 6 test may still fail under load); records final acceptance of Phase 8 (and the earlier open sign-offs, Phases 2–7); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–8 changes (the lockfile changes have not run on a clean runner); then Phase 9 – Redis Scaling and Performance.
+**Next step (current, 2026-11-21):** the owner commits the Phase 9 files (suggested message: `docs/PHASE_9_COMMIT_MESSAGE.txt`), decides whether the message-count test in `apps/collab/test/cluster.int.test.ts` is fixed before Phase 10 (§14.9), and decides on PERFORMANCE §0, that is whether a run on the owner's hardware is wanted before Phase 10 sets targets (§14.9 does not record that decision); Phase 10 follows. **Earlier next step (2026-11-20, still open where not done):** the owner commits the Phase 8 files (the new migration folder `packages/db/prisma/migrations/20261119120000_comments_versions/` and the corrected `apps/collab/test/versions.int.test.ts` must be part of the commit) and runs the full suite once more (1077 of 1077 expected; the known flaky Phase 6 test may still fail under load); records final acceptance of Phase 8 (and the earlier open sign-offs, Phases 2–7); decides what happens to the read-only `page_contents` table (D59 leaves dropping it open); runs the Docker `apps` profile and GitHub Actions on the Phase 5–8 changes (the lockfile changes have not run on a clean runner); then Phase 9 – Redis Scaling and Performance.
 
 Read `CLAUDE.md` first. This file is the source of truth for current project status.
 
@@ -55,6 +57,7 @@ Read `CLAUDE.md` first. This file is the source of truth for current project sta
 | Phase 7 | **Implemented 2026-11-18; owner-verified locally 2026-11-19.** `pnpm install`, `pnpm build:packages`, lint, format check and typecheck pass; the full test run reached 55 files and 965 of 966 tests (`--testTimeout=30000`, 257.73 s), the single failure being a Phase 6 persistence test in `apps/collab/test/sync.int.test.ts` that is flaky under load (passed 4 of 4 times alone); API, collab and web started and login worked; the owner checklist (§12.7 items 2–7) was checked in real browsers and reported working. D61 accepted 2026-11-19. **Not done:** final owner acceptance, Docker, CI, long idle runs, automated browser E2E. See §12 and §12.11. |
 
 | Phase 8 | **Implemented 2026-11-19; owner-verified locally 2026-11-20.** `migrate deploy`, `migrate status` and the scratch-database drift check are clean; build, lint, format check and typecheck pass; the full test run reached 61 files and 1076 of 1077 tests (`--testTimeout=30000`, 265.11 s), the single failure being a test-ordering bug in `apps/collab/test/versions.int.test.ts` (it failed every time, alone as well); the test was corrected and the file passes 27 of 27, the full suite was not rerun; the owner checklist (§13.7) was checked in two real browsers and reported working. D62 and D63 accepted 2026-11-20. **Not done:** a full-suite rerun after the fix, final owner acceptance, Docker, CI, two collab instances in real browsers (Phase 9), automated browser E2E. See §13 and §13.11. |
+| Phase 9 | **Implemented 2026-11-21 in a preparation environment; not owner-verified.** Cross-instance synchronization, U13 recovery, replicated stores, heartbeat and per-instance limits, benchmarks and 40 new tests (§14). New settings `COLLAB_CLUSTER_*`, `COLLAB_INSTANCE_ID`, `COLLAB_REDIS_PREFIX`, `COLLAB_CONNECTION_TIMEOUT_MS`. **No database migration.** New dependency: `@hocuspocus/extension-redis` 4.8.0 (exact pin). |
 
 ### Decisions and open items
 
@@ -75,7 +78,7 @@ Read `CLAUDE.md` first. This file is the source of truth for current project sta
 
 - **D62 and D63 (Phase 8):** proposed on 2026-11-19; **accepted by the owner on 2026-11-20** (§13.11). They resolve U8 (detached threads) and U11 for snapshots; activity-log pruning remains open for Phase 10.
 
-- **U13:** Explicit production recovery after Redis Pub/Sub message loss remains a Phase 9 decision. Redis reconnection alone is not proof of reconvergence.
+- **U13:** **Resolved by D64 (Phase 9, proposed 2026-11-21, accepted by the owner 2026-11-21).** Server-to-server reconciliation (PostgreSQL comparison plus state-vector announcement after every Redis reconnection and on a timer); reconnecting alone is tested as insufficient. **D65 (replicated stores), D66 (Redis-independence rules) and D67 (sticky routing: evaluated, not built) are also proposed.**
 
 - **Phase 2 items:** D41–D47 were explicitly accepted by the owner on 2026-11-13 (see DECISIONS.md). V7 is resolved by measurement (Next.js does not set `X-Forwarded-For`; production needs an outer reverse proxy, D43). The actual production hosting target and proxy deployment remain open under U10; D43 approves the trusted-address-list design, not a specific hosting provider.
 - **D34–D40:** Their individual statuses remain as recorded in DECISIONS.md; do not infer blanket owner approval from implementation or test evidence.
@@ -1360,3 +1363,100 @@ The browser checks were reported per group ("all worked", "everything passes"); 
 **Files that must be part of the commit:** the new migration folder `packages/db/prisma/migrations/20261119120000_comments_versions/` (untracked when the drift check ran) and the corrected `apps/collab/test/versions.int.test.ts`.
 
 **Still not verified:** a full-suite run after the test fix (1077 of 1077 expected; the known flaky Phase 6 test in `sync.int.test.ts` did not fail in this run but may fail under load); Docker `apps` profile; GitHub Actions; two collaboration instances in real browsers, that is live convergence of ordinary edits across instances (Phase 9, AC-8.6); more than two concurrent users; restore of very large documents (Phase 10); automated browser E2E (Playwright).
+
+## 14. Phase 9 – Redis scaling and performance: implementation record (2026-11-21)
+
+Executed by Claude in a preparation environment (one virtual CPU, 4 GB, Node v22.23.5, PostgreSQL 16.15, Redis 7.0.15). **This section records the preparation environment. The owner's verification on the owner's platform and in real browsers, and the acceptance of D64–D67, are in §14.9.**
+
+### 14.1 What was implemented
+
+- `apps/collab/src/cluster.ts` (new): `ClusterSync`, a wrapper around `@hocuspocus/extension-redis` 4.8.0 (exact pin): fail-fast Redis connections, health tracking, guarded publishes, bounded document loads, tolerant shutdown, the U13 recovery procedure (after reconnection and on a timer), replicated stores, `stats()`.
+- `apps/collab/src/server.ts`, `config.ts`, `dependencies.ts`, `persistence.ts` (persistence counters and lag samples), `redis.ts` (`subscribeWithin`), `access-events.ts`, `page-events.ts` (bounded start-up wait).
+- `packages/db/src/document-store.ts`: `persistedVectors`, `appendDiff({ skipIfUnchanged })`, lock-first ordering (one statement fewer per store).
+- `packages/shared/src/env.ts`, `yjs.ts`: new settings; `storedAheadOfLive`.
+- Tests: `apps/collab/test/cluster.int.test.ts`, `cluster-failure.int.test.ts`, `cluster-access.int.test.ts`, `cluster-helpers.ts`, `harness.ts` (`crash()`, `redisUrl`); additions to `packages/db/test/document-store.int.test.ts`, `packages/shared/src/yjs.test.ts`, `shared.test.ts`.
+- Benchmarks: `apps/collab/bench/lib.ts`, `run.ts`; `apps/api/bench/api-latency.ts`; raw results `docs/benchmarks/*.json`; write-up `docs/PERFORMANCE.md`.
+- Docs: ARCHITECTURE §25, WEBSOCKET_PROTOCOL §20, TESTING §8.0e, DEPLOYMENT (settings, Redis names, balancer, operations, runbook), DECISIONS D64–D67 and U13, IMPLEMENTATION_PLAN Phase 9 status, `.env.example`.
+- **No schema change and no migration.**
+
+### 14.2 Acceptance criteria
+
+See the table in TESTING §8.0e. In short: AC-9.1 to 9.6 and 9.8 are met in tests; AC-9.9 is evaluated with measured evidence and a recommendation (not built); **AC-9.7 is only partly met** (all PERF metrics measured once, but PERF-02 reached no limit, most runs were single, PERF-07 is in process, one core; no targets are proposed).
+
+### 14.3 Test and check evidence
+
+- Full workspace run (`vitest run`, default project config, PostgreSQL 16 and Redis 7 on the same single-core machine): **64 files, 1,117 tests passed, 261.09 s.** An earlier full run, before the access tests and the loop-test fix, had 63 files and 1,113 tests passed.
+- `eslint .` over the whole repository: clean (exit 0). `tsc --noEmit` for `apps/collab`: clean. `prettier --check .`: fails only on `infra/docker-compose.yml` (the same pre-existing failure recorded for Phase 8).
+- **Not run:** `tsc` for every workspace package (only `apps/collab` and the packages through `pnpm build:packages`); the web and API suites ran as part of the full run but nothing in them was changed.
+- Two flaky-test notes: none of the known flaky Phase 6 test failures occurred in the two full runs; the cluster tests use polling with timeouts rather than fixed sleeps, but all timings come from one single-core machine and may need loosening elsewhere.
+- Per-test evidence and traceability: TESTING §8.0e. Measurements: PERFORMANCE.md.
+
+### 14.4 Findings made while implementing
+
+1. The 4.8.0 extension does **not store changes that arrive from Redis**; the instance that took an edit is the only one that stores it. Reproduced by test; closed by D65.
+2. Its Redis lock would make a Redis outage break PostgreSQL stores; switched off (D64).
+3. Its recovery is only implicit: a later change on any instance repairs earlier missed messages, an idle document is never repaired. Reconnecting alone left an instance stale (tested).
+4. Pre-existing defect: with Redis down at start-up the access- and page-event subscribers waited without limit, so `start()` never returned. Fixed (D66).
+5. The extension's `onDestroy` throws when Redis is unreachable; shutdown is now tolerant.
+6. The old documentation named a setting `COLLAB_AWAIT_INITIAL_SYNC_MS` that no code read; the real one is `COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS`.
+7. The 3-instance fan-out run saw 40 of 9,000 observations fewer than expected; a separate 600-change run lost none. **Unexplained** (PERFORMANCE §2).
+8. Under continuous typing the store lag is about 10 s (the maximum debounce): the real G3 window.
+
+### 14.5 Deviations from the design documents
+
+- U13 was resolved by reconciliation, not forced reconnect (the forced reconnect stays the documented fallback).
+- While Redis is down instances keep serving (the design text said they must not serve known-stale documents as healthy); this is D64 item 6 and needs the owner's decision.
+- The planned per-IP edge limiting and a global per-user connection limit were **not** done.
+- Benchmarks ran once per profile (TESTING §7 asks for several); no performance targets are proposed.
+
+### 14.6 Not verified and known limitations
+
+Real browsers; the owner's platform; Docker and CI; more than three instances; real network, balancer, TLS; Redis Cluster/Sentinel; Redis eviction; session-revoked and workspace-deleted events across instances; the cost of the resynchronization pass with thousands of open documents; shutdown time with many open documents; delete-only divergence is repaired only by the state-vector announcement; a killed instance's cursors linger about 34 s; the three instances' RSS differences in the fan-out run; the idle database baseline for the replicated-store transaction counts.
+
+### 14.7 Owner verification checklist
+
+1. `pnpm install`, `pnpm build:packages`, then the repository checks and the full test run on your platform. The new tests need PostgreSQL and Redis from Compose; `cluster.int.test.ts` includes one 35 s test.
+2. Start two collab instances with different `COLLAB_PORT` and `COLLAB_INSTANCE_ID` and the same `COLLAB_REDIS_PREFIX`; open one page in two browsers, each connected to a different instance; type in both. Expect live text and carets in both directions.
+3. Stop Redis for about 10 s while both browsers type, then start it. Expect both browsers to show all text within a few seconds without a reload; look for `redis unavailable` and `redis is back` in the collab logs.
+4. Stop one instance (SIGTERM) while typing: the browser should reconnect to the other and keep its text.
+5. Read `docs/PERFORMANCE.md` §0 and decide whether the one-core figures are enough or a run on the owner's hardware is wanted before Phase 10 sets targets.
+6. Accept, amend or reject D64–D67 (DECISIONS.md), in particular D64 item 6 (serve during an outage).
+
+Results of the owner's run: §14.9.
+
+### 14.8 Change log (Phase 9)
+
+| Date | Change |
+|---|---|
+| 2026-11-21 | Phase 9 implemented; documents updated: ARCHITECTURE, WEBSOCKET_PROTOCOL, TESTING, DEPLOYMENT, HANDOVER, DECISIONS, IMPLEMENTATION_PLAN; PERFORMANCE.md and `docs/benchmarks/` added |
+| 2026-11-21 | Owner verification of Phase 9 completed locally (§14.9): checks, 1,116 of 1,117 tests, two instances in real browsers, Redis outage, stop of one instance; D64–D67 accepted. Documents updated with the result: ARCHITECTURE, DECISIONS, DEPLOYMENT, HANDOVER, IMPLEMENTATION_PLAN, PERFORMANCE, TESTING, WEBSOCKET_PROTOCOL |
+
+
+### 14.9 Owner verification (2026-11-21)
+
+**Environment:** the owner's Windows machine (Git Bash), PostgreSQL 17 and Redis 7 from Compose (`pnpm infra:up`; both containers healthy); pnpm 12.18.0, Vitest 5.1.0, Prisma 7.10.1. The Node version and the browser names and versions were not recorded in this session.
+
+| Step | Result |
+|---|---|
+| `pnpm infra:up`, `pnpm install` | Containers healthy; install already up to date |
+| `pnpm build:packages`, `pnpm lint`, `pnpm format:check`, `pnpm typecheck` | All passed. `prettier --check` reported that all matched files use Prettier code style, so the `infra/docker-compose.yml` failure seen in the preparation environment did not appear. The Prisma CLI printed a major-version update notice; not applied |
+| No migration | Phase 9 adds no migration, so `migrate deploy` and the drift check were not run |
+| `pnpm test --testTimeout=30000`, full run | **64 files, 1,116 of 1,117 tests passed, 317.19 s.** The failure: `apps/collab/test/cluster.int.test.ts` > "no message loops and no duplicate processing (AC-9.9)" > "one edit produces a bounded number of Redis messages that stops once the instances agree"; line 225, `expect(messages).toBe(afterSettling)` received 15 where 10 was expected |
+| That file alone, three runs | **13 of 14 passed every time; the same test failed every time**, with different numbers (7 then 10; 13 then 27; 7 then 30). The other 13 cluster tests, including the exactly-once and the replicated-store tests, passed |
+| That test alone (`-t "one edit produces"`), two runs | **Passed both times** (2.4 s) |
+| Cause | **Not confirmed.** The test counts every message on every channel under the cluster prefix, and the tests in the file share one cluster, so traffic left by earlier tests (open clients, presence renewals) is the likely source; a message loop would also have shown when the test ran alone, and it did not. The suggested way to confirm (printing the channel and time of each late message) was not run |
+| Two collaboration instances | Started with `COLLAB_INSTANCE_ID=collab-1 COLLAB_PORT=4100` and `COLLAB_INSTANCE_ID=collab-2 COLLAB_PORT=4101` (same prefix from `.env`); both logged `cluster: "connected"` |
+| §14.7 item 2 (two browsers, two instances) | The API gives the browser its collab address from `COLLAB_URL`, so the API was started with `COLLAB_URL=ws://localhost:4100` for browser A and restarted with `COLLAB_URL=ws://localhost:4101` for browser B. Typing in both: reported as working, text and carets in both directions |
+| §14.7 item 3 (Redis stopped about 10 s while both browsers typed) | Reported as working: both browsers showed all the text after Redis returned, without a reload. The log lines `redis unavailable` and `redis is back` and the time to convergence were not reported |
+| §14.7 item 4 (one instance stopped while typing) | Reported as working. Whether the browser reconnected on its own or needed a reload, and to which port, was not reported |
+
+The browser checks were reported per group ("everything works"); no per-step detail, screenshots or timings were recorded.
+
+**Decisions:** D64, D65, D66 and D67 accepted by the owner on 2026-11-21, as proposed (including D64 item 6, serving during an outage). U13 is resolved by D64.
+
+**Open items:**
+- The message-count test above fails inside the full file. It looks like a test problem and not a server loop (it passes alone and the exactly-once test passes), but the cause was not confirmed; the test needs to count only its own page's channel, or wait until earlier clients are closed, before it can be trusted as proof that there are no loops.
+- §14.7 item 5 (whether the one-core figures in PERFORMANCE §0 are enough or a run on the owner's hardware is wanted) was not answered in this session.
+- A full-suite run after the test is fixed (1,117 of 1,117 expected).
+
+**Still not verified:** Docker `apps` profile; GitHub Actions on the Phase 5–9 changes (the lockfile changes have not run on a clean runner); more than two instances in real browsers; a load balancer or TLS; Redis Cluster/Sentinel; any multi-core run (D67's condition for sticky routing); automated browser E2E (Playwright).

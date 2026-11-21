@@ -1,0 +1,20 @@
+{
+  "scenario": "recovery-instance",
+  "at": "2026-11-21T04:30:05.777Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": {
+    "clientsKilledWith": 8,
+    "allClientsSyncedAgainAfterMs": 230,
+    "restartedInstanceStartupMs": 706,
+    "newClientOnRestartedInstanceSyncedInMs": 378,
+    "tokensTyped": 73,
+    "tokensMissingOnAnyClient": 0,
+    "tokensMissingInPostgres": 0
+  }
+}

@@ -101,6 +101,56 @@ describe('parseEnv', () => {
   });
 });
 
+describe('collab cluster settings (Phase 9)', () => {
+  const base = {
+    NODE_ENV: 'production',
+    DATABASE_URL: validApi.DATABASE_URL,
+    REDIS_URL: validApi.REDIS_URL,
+    APP_URL: 'http://localhost:3000',
+    COLLAB_JWT_PUBLIC_KEYS: JSON.stringify([{ kty: 'OKP', crv: 'Ed25519', x: 'AAAA', kid: 'k1' }]),
+  };
+
+  it('defaults to cluster synchronization on, with documented intervals', () => {
+    const env = parseEnv('collab', collabEnvSchema, base);
+    expect(env.COLLAB_CLUSTER_ENABLED).toBe(true);
+    expect(env.COLLAB_INSTANCE_ID).toBeUndefined();
+    expect(env.COLLAB_REDIS_PREFIX).toBe('conote:collab');
+    expect(env.COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS).toBe(1000);
+    expect(env.COLLAB_CLUSTER_RESYNC_INTERVAL_MS).toBe(30_000);
+    expect(env.COLLAB_CLUSTER_STORE_REPLICATED).toBe(true);
+    expect(env.COLLAB_CONNECTION_TIMEOUT_MS).toBe(60_000);
+  });
+
+  it('accepts true/false/1/0 for flags and 0 to switch the periodic check off', () => {
+    const env = parseEnv('collab', collabEnvSchema, {
+      ...base,
+      COLLAB_CLUSTER_ENABLED: 'FALSE',
+      COLLAB_CLUSTER_STORE_REPLICATED: '0',
+      COLLAB_CLUSTER_RESYNC_INTERVAL_MS: '0',
+      COLLAB_INSTANCE_ID: 'collab-eu-1',
+    });
+    expect(env.COLLAB_CLUSTER_ENABLED).toBe(false);
+    expect(env.COLLAB_CLUSTER_STORE_REPLICATED).toBe(false);
+    expect(env.COLLAB_CLUSTER_RESYNC_INTERVAL_MS).toBe(0);
+    expect(env.COLLAB_INSTANCE_ID).toBe('collab-eu-1');
+  });
+
+  it('rejects values that would break the Redis protocol or make a setting ambiguous', () => {
+    expect(() =>
+      parseEnv('collab', collabEnvSchema, { ...base, COLLAB_CLUSTER_ENABLED: 'maybe' }),
+    ).toThrow(/COLLAB_CLUSTER_ENABLED/);
+    expect(() =>
+      parseEnv('collab', collabEnvSchema, { ...base, COLLAB_INSTANCE_ID: 'has space' }),
+    ).toThrow(/COLLAB_INSTANCE_ID/);
+    expect(() =>
+      parseEnv('collab', collabEnvSchema, { ...base, COLLAB_REDIS_PREFIX: 'a b' }),
+    ).toThrow(/COLLAB_REDIS_PREFIX/);
+    expect(() =>
+      parseEnv('collab', collabEnvSchema, { ...base, COLLAB_CONNECTION_TIMEOUT_MS: '0' }),
+    ).toThrow(/COLLAB_CONNECTION_TIMEOUT_MS/);
+  });
+});
+
 describe('errors and envelopes', () => {
   it('AppError maps code to HTTP status', () => {
     const err = new AppError('NOT_FOUND', 'missing');

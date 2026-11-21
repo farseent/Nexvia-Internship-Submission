@@ -1,0 +1,125 @@
+{
+  "scenario": "connections",
+  "at": "2026-11-21T04:31:52.955Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": [
+    {
+      "idleRssMb": 129.4,
+      "documentsOpen": 200
+    },
+    {
+      "connections": 100,
+      "failedToConnect": 0,
+      "rampSeconds": 1.9,
+      "connectGroupOf25Ms": {
+        "n": 4,
+        "p50": 44.07,
+        "p95": 1787.79,
+        "p99": 1787.79,
+        "max": 1787.79,
+        "mean": 473.19
+      },
+      "rssMb": 194.8,
+      "rssMbPerConnection": 0.654,
+      "idleCpuPercentOfOneCore": 0.2,
+      "loadedCpuPercentOfOneCore": 8.3,
+      "typists": 25,
+      "probeLatencyMsUnderLoad": {
+        "n": 150,
+        "p50": 2.5,
+        "p95": 6.4,
+        "p99": 28.5,
+        "max": 58.04,
+        "mean": 3.47
+      },
+      "registeredConnections": 100
+    },
+    {
+      "connections": 250,
+      "failedToConnect": 0,
+      "rampSeconds": 2.4,
+      "connectGroupOf25Ms": {
+        "n": 6,
+        "p50": 283.07,
+        "p95": 1172.84,
+        "p99": 1172.84,
+        "max": 1172.84,
+        "mean": 364.68
+      },
+      "rssMb": 219.7,
+      "rssMbPerConnection": 0.361,
+      "idleCpuPercentOfOneCore": 0.6,
+      "loadedCpuPercentOfOneCore": 10,
+      "typists": 63,
+      "probeLatencyMsUnderLoad": {
+        "n": 150,
+        "p50": 1.83,
+        "p95": 6.57,
+        "p99": 24.28,
+        "max": 26.42,
+        "mean": 2.68
+      },
+      "registeredConnections": 250
+    },
+    {
+      "connections": 500,
+      "failedToConnect": 0,
+      "rampSeconds": 2.5,
+      "connectGroupOf25Ms": {
+        "n": 10,
+        "p50": 50.95,
+        "p95": 1996.95,
+        "p99": 1996.95,
+        "max": 1996.95,
+        "mean": 240.32
+      },
+      "rssMb": 238.7,
+      "rssMbPerConnection": 0.219,
+      "idleCpuPercentOfOneCore": 1.8,
+      "loadedCpuPercentOfOneCore": 11.2,
+      "typists": 125,
+      "probeLatencyMsUnderLoad": {
+        "n": 150,
+        "p50": 1.35,
+        "p95": 4.49,
+        "p99": 24.06,
+        "max": 40.12,
+        "mean": 2.16
+      },
+      "registeredConnections": 500
+    },
+    {
+      "connections": 1000,
+      "failedToConnect": 0,
+      "rampSeconds": 3.1,
+      "connectGroupOf25Ms": {
+        "n": 20,
+        "p50": 38.17,
+        "p95": 1782.38,
+        "p99": 1782.38,
+        "max": 1782.38,
+        "mean": 146.03
+      },
+      "rssMb": 259.2,
+      "rssMbPerConnection": 0.13,
+      "idleCpuPercentOfOneCore": 2.4,
+      "loadedCpuPercentOfOneCore": 17.5,
+      "typists": 250,
+      "probeLatencyMsUnderLoad": {
+        "n": 150,
+        "p50": 1.45,
+        "p95": 10.47,
+        "p99": 67.6,
+        "max": 218.18,
+        "mean": 4.38
+      },
+      "registeredConnections": 1000
+    }
+  ]
+}

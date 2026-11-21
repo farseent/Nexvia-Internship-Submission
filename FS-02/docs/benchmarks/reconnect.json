@@ -1,0 +1,39 @@
+{
+  "scenario": "reconnect",
+  "at": "2026-11-21T04:46:58.454Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": {
+    "networkDropToSyncedMs": {
+      "n": 20,
+      "p50": 119.04,
+      "p95": 131.05,
+      "p99": 131.05,
+      "max": 131.05,
+      "mean": 120.84
+    },
+    "instanceKillToClientSyncedMs": {
+      "n": 7,
+      "p50": 1252.78,
+      "p95": 1620.08,
+      "p99": 1620.08,
+      "max": 1620.08,
+      "mean": 1330.48
+    },
+    "newProcessStartupMs": {
+      "n": 7,
+      "p50": 742.29,
+      "p95": 1070.78,
+      "p99": 1070.78,
+      "max": 1070.78,
+      "mean": 800.41
+    },
+    "contentSurvivedEveryRestart": true,
+    "note": "client reconnect delay 50-500 ms in this benchmark client"
+  }
+}

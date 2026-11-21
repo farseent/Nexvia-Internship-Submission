@@ -160,6 +160,24 @@ export type ApiEnv = z.infer<typeof apiEnvSchema>;
 const positiveInt = (defaultValue: number, max = 86_400_000) =>
   z.coerce.number().int().min(1).max(max).default(defaultValue);
 
+/** An integer that may be 0 (used where 0 means "switched off"). */
+const nonNegativeInt = (defaultValue: number, max = 86_400_000) =>
+  z.coerce.number().int().min(0).max(max).default(defaultValue);
+
+/** `true`/`false` (also 1/0), case-insensitive; anything else is rejected. */
+const booleanFlag = (defaultValue: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      if (value === undefined || value.trim() === '') return defaultValue;
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
+      ctx.addIssue({ code: 'custom', message: 'must be true or false' });
+      return z.NEVER;
+    });
+
 export const collabEnvSchema = z
   .object({
     NODE_ENV: nodeEnv,
@@ -207,6 +225,36 @@ export const collabEnvSchema = z
     COLLAB_EDIT_ACTIVITY_INTERVAL_MS: positiveInt(300_000, 86_400_000),
     /** How long a restore barrier lasts if its holder disappears (D62). */
     COLLAB_RESTORE_BARRIER_TTL_MS: positiveInt(30_000, 600_000),
+    /**
+     * Phase 9 (D64): cross-instance synchronization through Redis. `false` runs the instance
+     * on its own (a single-instance deployment, or the baseline of a benchmark).
+     */
+    COLLAB_CLUSTER_ENABLED: booleanFlag(true),
+    /** Name of this instance in logs and in the Redis protocol; random per process when unset. */
+    COLLAB_INSTANCE_ID: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]{1,64}$/, 'must be 1-64 letters, digits, dots, dashes or underscores')
+      .optional(),
+    /** Prefix of the Redis channels of the document synchronization (never a persistent key). */
+    COLLAB_REDIS_PREFIX: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9:._-]{1,64}$/,
+        'must be 1-64 letters, digits, colons, dots, dashes or underscores',
+      )
+      .default('conote:collab'),
+    /** How long loading a document waits for a peer instance's state (the extension's `awaitInitialSyncTimeout`). */
+    COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS: nonNegativeInt(1_000, 60_000),
+    /**
+     * Anti-entropy interval (U13): how often an instance asks its peers for what it may have
+     * missed and compares its open documents with PostgreSQL. 0 switches the periodic check off;
+     * the check after a Redis reconnection always runs.
+     */
+    COLLAB_CLUSTER_RESYNC_INTERVAL_MS: nonNegativeInt(30_000, 3_600_000),
+    /** Also store changes that arrived from another instance (durability if the originating instance dies). */
+    COLLAB_CLUSTER_STORE_REPLICATED: booleanFlag(true),
+    /** Close a connection that sent nothing for this long (heartbeat; clients send pings). */
+    COLLAB_CONNECTION_TIMEOUT_MS: positiveInt(60_000, 3_600_000),
   })
   .transform((env) => ({
     ...env,

@@ -1,0 +1,98 @@
+{
+  "scenario": "persistence",
+  "at": "2026-11-21T04:29:51.048Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": [
+    {
+      "topology": "1 instance",
+      "keystrokes": 297,
+      "rowsWritten": 3,
+      "bytesStored": 347,
+      "persistenceLagMs": {
+        "n": 3,
+        "p50": 10078,
+        "p95": 11715,
+        "p99": 11715,
+        "max": 11715,
+        "mean": 10604.67
+      },
+      "databaseTransactionsPerMinute": 40,
+      "tuplesInsertedPerMinute": 21,
+      "rebuiltTextMatchesEveryKeystroke": true,
+      "instanceCpuSeconds": [
+        1.8
+      ]
+    },
+    {
+      "topology": "2 instances, replicated stores on",
+      "keystrokes": 296,
+      "rowsWritten": 3,
+      "bytesStored": 346,
+      "persistenceLagMs": {
+        "n": 3,
+        "p50": 10098,
+        "p95": 11661,
+        "p99": 11661,
+        "max": 11661,
+        "mean": 10612
+      },
+      "databaseTransactionsPerMinute": 50,
+      "tuplesInsertedPerMinute": 7,
+      "rebuiltTextMatchesEveryKeystroke": true,
+      "instanceCpuSeconds": [
+        2.02,
+        1.78
+      ]
+    },
+    {
+      "topology": "3 instances, replicated stores on",
+      "keystrokes": 296,
+      "rowsWritten": 3,
+      "bytesStored": 346,
+      "persistenceLagMs": {
+        "n": 3,
+        "p50": 10121,
+        "p95": 11638,
+        "p99": 11638,
+        "max": 11638,
+        "mean": 10622.33
+      },
+      "databaseTransactionsPerMinute": 71,
+      "tuplesInsertedPerMinute": 7,
+      "rebuiltTextMatchesEveryKeystroke": true,
+      "instanceCpuSeconds": [
+        2.22,
+        1.84,
+        1.84
+      ]
+    },
+    {
+      "topology": "3 instances, replicated stores off",
+      "keystrokes": 296,
+      "rowsWritten": 3,
+      "bytesStored": 346,
+      "persistenceLagMs": {
+        "n": 3,
+        "p50": 10077,
+        "p95": 11634,
+        "p99": 11634,
+        "max": 11634,
+        "mean": 10592.67
+      },
+      "databaseTransactionsPerMinute": 47,
+      "tuplesInsertedPerMinute": 7,
+      "rebuiltTextMatchesEveryKeystroke": true,
+      "instanceCpuSeconds": [
+        2.17,
+        1.8,
+        1.77
+      ]
+    }
+  ]
+}

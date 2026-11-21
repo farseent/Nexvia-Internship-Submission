@@ -1,3 +1,4 @@
+import { subscribeWithin } from './redis.js';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import { PAGE_EVENTS_CHANNEL, pageEventSchema, type PageEvent } from '@conote/shared';
@@ -20,13 +21,8 @@ export class PageEventListener {
     this.subscriber.on('message', (channel: string, raw: string) => {
       if (channel === PAGE_EVENTS_CHANNEL) void this.handle(raw);
     });
-    try {
-      await this.subscriber.subscribe(PAGE_EVENTS_CHANNEL);
-    } catch (err) {
-      this.logger.warn(
-        { err: { name: (err as Error).name } },
-        'could not subscribe to page events yet',
-      );
+    if (!(await subscribeWithin(this.subscriber, PAGE_EVENTS_CHANNEL))) {
+      this.logger.warn('could not subscribe to page events yet');
     }
   }
 

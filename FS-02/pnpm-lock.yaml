@@ -260,6 +260,9 @@ importers:
       '@conote/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@hocuspocus/extension-redis':
+        specifier: 4.8.0
+        version: 4.8.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
       '@hocuspocus/server':
         specifier: 4.8.0
         version: 4.8.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
@@ -847,6 +850,12 @@ packages:
   '@hocuspocus/common@4.8.0':
     resolution: {integrity: sha512-UI8Vye3mds2aMUHaWfwkDq0+257JUpvKa0nyAOjXWLfyhYHsAq8eku+ynZc/PaShyOci/VD54cW/rLQJGHHPKg==}
 
+  '@hocuspocus/extension-redis@4.8.0':
+    resolution: {integrity: sha512-Tva3oOJor5X3xkeq9MU1cppzDr72VsRmWAPFXxUbT8rduggw7PaUs+9KETTnGGcNAqYbtkud6Xt/OMxCkdhhow==}
+    peerDependencies:
+      y-protocols: ^1.0.6
+      yjs: ^13.6.8
+
   '@hocuspocus/provider@4.8.0':
     resolution: {integrity: sha512-WUwwu3W55n0fkMF1uYhx4WXlRjJ/t7OjsxiuzTMMQGDvvZrZA37CAysdqc7JXLVmN6A5IIWadE921pxN9/JotA==}
     peerDependencies:
@@ -1392,6 +1401,12 @@ packages:
 
   '@rolldown/pluginutils@1.1.0':
     resolution: {integrity: sha512-K+NU2HDCEem4sClgHH4ZZXwdJeNFkJo+hRk479DIwdIviAPN2hFJH1KHHwg8CxHQXvi0M5XY4deTXINfIiSG6w==}
+
+  '@sesamecare-oss/redlock@1.4.0':
+    resolution: {integrity: sha512-2z589R+yxKLN4CgKxP1oN4dsg6Y548SE4bVYam/R0kHk7Q9VrQ9l66q+k1ehhSLLY4or9hcchuF9/MhuuZdjJg==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      ioredis: '>=5'
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -3788,6 +3803,19 @@ snapshots:
     dependencies:
       lib0: 0.2.120
 
+  '@hocuspocus/extension-redis@4.8.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)':
+    dependencies:
+      '@hocuspocus/common': 4.8.0
+      '@hocuspocus/server': 4.8.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
+      '@sesamecare-oss/redlock': 1.4.0(ioredis@5.6.1)
+      ioredis: 5.6.1
+      kleur: 4.1.5
+      y-protocols: 1.0.7(yjs@13.6.33)
+      yjs: 13.6.33
+    transitivePeerDependencies:
+      - srvx
+      - supports-color
+
   '@hocuspocus/provider@4.8.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)':
     dependencies:
       '@hocuspocus/common': 4.8.0
@@ -4223,6 +4251,10 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.1.0': {}
+
+  '@sesamecare-oss/redlock@1.4.0(ioredis@5.6.1)':
+    dependencies:
+      ioredis: 5.6.1
 
   '@standard-schema/spec@1.1.0': {}
 

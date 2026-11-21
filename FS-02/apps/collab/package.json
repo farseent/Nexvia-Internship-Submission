@@ -15,6 +15,7 @@
     "@conote/db": "workspace:*",
     "@conote/editor": "workspace:*",
     "@conote/shared": "workspace:*",
+    "@hocuspocus/extension-redis": "4.8.0",
     "@hocuspocus/server": "4.8.0",
     "ioredis": "5.6.1",
     "jose": "6.2.17",

@@ -1,0 +1,122 @@
+{
+  "scenario": "api-latency",
+  "at": "2026-11-21T04:44:12.496Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1
+  },
+  "results": [
+    {
+      "endpoint": "GET /workspaces (list)",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 324,
+      "latencyMs": {
+        "n": 400,
+        "p50": 20.03,
+        "p95": 59.69,
+        "p99": 100.54,
+        "max": 115.61
+      }
+    },
+    {
+      "endpoint": "GET /workspaces/:id/pages (tree of 200 pages, PAGE-02)",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 160,
+      "latencyMs": {
+        "n": 400,
+        "p50": 44.21,
+        "p95": 100.66,
+        "p99": 124.39,
+        "max": 167.01
+      }
+    },
+    {
+      "endpoint": "GET /pages/:id",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 298,
+      "latencyMs": {
+        "n": 400,
+        "p50": 25.01,
+        "p95": 42.71,
+        "p99": 51.56,
+        "max": 60.41
+      }
+    },
+    {
+      "endpoint": "GET /pages/:id/threads (none yet)",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 197,
+      "latencyMs": {
+        "n": 400,
+        "p50": 39.82,
+        "p95": 58.86,
+        "p99": 69.87,
+        "max": 78.77
+      }
+    },
+    {
+      "endpoint": "GET /pages/:id/versions",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 255,
+      "latencyMs": {
+        "n": 400,
+        "p50": 29.35,
+        "p95": 44.75,
+        "p99": 94.57,
+        "max": 96.69
+      }
+    },
+    {
+      "endpoint": "POST /pages/:id/collab-token",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 250,
+      "latencyMs": {
+        "n": 400,
+        "p50": 30.59,
+        "p95": 43.74,
+        "p99": 55.82,
+        "max": 57.44
+      }
+    },
+    {
+      "endpoint": "PATCH /pages/:id (rename)",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 138,
+      "latencyMs": {
+        "n": 400,
+        "p50": 53.74,
+        "p95": 86.84,
+        "p99": 135.2,
+        "max": 144.7
+      }
+    },
+    {
+      "endpoint": "POST /workspaces/:id/pages (create)",
+      "concurrency": 8,
+      "requests": 400,
+      "errors": 0,
+      "requestsPerSecond": 139,
+      "latencyMs": {
+        "n": 400,
+        "p50": 54.31,
+        "p95": 67.73,
+        "p99": 177.16,
+        "max": 178.54
+      }
+    }
+  ]
+}

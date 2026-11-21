@@ -505,3 +505,82 @@ describe('database constraints', () => {
     expect(await rowCount(pageId)).toBe(0);
   });
 });
+
+// ───────────── Phase 9: multi-instance reads (D64, D65) ─────────────
+
+describe('stale-document detection and replicated stores (Phase 9)', () => {
+  it('persistedVectors returns one vector per stored page and leaves out unknown pages', async () => {
+    const stored = await createTestPage(prisma);
+    const untouched = await createTestPage(prisma);
+    const doc = new Y.Doc();
+    addParagraph(doc, 'stored');
+    await store.appendDiff(stored, doc);
+    const vectors = await store.persistedVectors([
+      stored,
+      untouched,
+      '00000000-0000-4000-8000-000000000000',
+    ]);
+    expect(vectors.has(stored)).toBe(true);
+    expect(stateVectorsEqual(vectors.get(stored)!, Y.encodeStateVector(doc))).toBe(true);
+    expect(vectors.has('00000000-0000-4000-8000-000000000000')).toBe(false);
+    expect((await store.persistedVectors([])).size).toBe(0);
+  });
+
+  it('skipIfUnchanged answers without a transaction when the data is already stored', async () => {
+    const pageId = await createTestPage(prisma);
+    const doc = new Y.Doc();
+    addParagraph(doc, 'one');
+    const first = await store.appendDiff(pageId, doc);
+    expect(first.stored).toBe(true);
+    const again = await store.appendDiff(pageId, doc, { skipIfUnchanged: true });
+    expect(again).toEqual({
+      stored: false,
+      seq: null,
+      bytes: 0,
+      pendingRows: 0,
+      skippedWithoutLock: true,
+    });
+    expect(await rowCount(pageId)).toBe(1);
+  });
+
+  it('skipIfUnchanged still stores a document that has something new, and a page never stored', async () => {
+    const pageId = await createTestPage(prisma);
+    const doc = new Y.Doc();
+    addParagraph(doc, 'one');
+    // Never stored: there is no digest, so the fast path must not claim "already stored".
+    const first = await store.appendDiff(pageId, doc, { skipIfUnchanged: true });
+    expect(first.stored).toBe(true);
+    addParagraph(doc, 'two');
+    const second = await store.appendDiff(pageId, doc, { skipIfUnchanged: true });
+    expect(second.stored).toBe(true);
+    expect(await rowCount(pageId)).toBe(2);
+    const rebuilt = await store.load(pageId);
+    expectSameDocument(rebuilt.doc, doc);
+  });
+
+  it('skipIfUnchanged notices a deletion, which moves the delete set but no clock', async () => {
+    const pageId = await createTestPage(prisma);
+    const doc = new Y.Doc();
+    addParagraph(doc, 'to be shortened');
+    await store.appendDiff(pageId, doc);
+    textAt(doc, 0).delete(0, 3);
+    const result = await store.appendDiff(pageId, doc, { skipIfUnchanged: true });
+    expect(result.stored).toBe(true);
+    expectSameDocument((await store.load(pageId)).doc, doc);
+  });
+
+  it('two instances storing the same changes at the same moment write them once', async () => {
+    const pageId = await createTestPage(prisma);
+    const doc = new Y.Doc();
+    addParagraph(doc, 'concurrent');
+    const results = await Promise.all([
+      store.appendDiff(pageId, doc),
+      store.appendDiff(pageId, doc, { skipIfUnchanged: true }),
+      store.appendDiff(pageId, doc, { skipIfUnchanged: true }),
+      store.appendDiff(pageId, doc),
+    ]);
+    expect(results.filter((result) => result.stored)).toHaveLength(1);
+    expect(await rowCount(pageId)).toBe(1);
+    expectSameDocument((await store.load(pageId)).doc, doc);
+  });
+});

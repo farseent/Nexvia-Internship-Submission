@@ -1,7 +1,7 @@
 # CoNote – Technical Decisions
 
 **Status:** Phase 1 infrastructure implemented and Phase 1b spike executed; Phase 2 authentication and user management implemented and locally verified. D41–D47 explicitly accepted by the project owner on 2026-11-13. Phase 2 GitHub Actions CI was deferred by the owner and later reported as passed by the owner (recorded 2026-11-15). Evidence and remaining limitations are tracked in HANDOVER.md. D54–D57 were accepted by the owner on 2026-11-16 and D58–D60 on 2026-11-18. D61 (Phase 7) was accepted on 2026-11-19, and D62 and D63 (Phase 8) on 2026-11-20.
-**Last updated:** 2026-11-20 (Phase 8: D62 and D63 accepted; U8 resolved; U11 resolved for snapshots)
+**Last updated:** 2026-11-21 (Phase 9: D64–D67 accepted by the owner after local verification; U13 resolved by D64). Previously 2026-11-20 (Phase 8: D62 and D63 accepted; U8 resolved; U11 resolved for snapshots)
 **Owner:** Project owner (approvals) / Claude (drafting)
 
 This is the permanent decision register for CoNote. Decision IDs (`D#`) and unresolved-question IDs (`U#`) are **permanent**: they are never renumbered or reused. A changed decision is recorded by adding a new decision that supersedes the old one and updating the old one's status.
@@ -83,6 +83,10 @@ This is the permanent decision register for CoNote. Decision IDs (`D#`) and unre
 | D61 | Phase 7 presence: server-stamped identity, one awareness client id per connection, validated cursor only, no persistence | Accepted (owner approval, 2026-11-19) |
 | D62 | Phase 8 restore: diff-based single transaction, PostgreSQL barrier with token and expiry, in-process write gate, scratch-copy planning | Accepted (owner approval, 2026-11-20) |
 | D63 | Phase 8 version history and comments policy: snapshot kinds and rules, retention, contributors, anchors, detached rule, comment scope | Accepted (owner approval, 2026-11-20) |
+| D64 | Phase 9 cross-instance synchronization: the Hocuspocus Redis extension wrapped for safe failure, and the U13 recovery procedure | Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9) |
+| D65 | Phase 9 replicated stores and the unlocked "already stored" check | Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9) |
+| D66 | Phase 9 rules that keep Redis from being a prerequisite: bounded waits, fail-fast clients, tolerant shutdown, heartbeat | Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9) |
+| D67 | Phase 9 sticky-routing evaluation: measured, not built; build when a multi-core run shows per-document load as the limit | Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9) |
 
 ---
 
@@ -555,6 +559,40 @@ Protected pages call `requireUser()` (server component, asks the API with the fo
 
 ---
 
+### D64 – Phase 9 cross-instance synchronization and the U13 recovery procedure
+
+- **Status:** Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9). Implemented and tested (TESTING §8.0e); verified by the owner on 2026-11-21 (HANDOVER §14.9): two instances in real browsers, a Redis outage and recovery without a reload, and the stop of one instance all reported working. Details: ARCHITECTURE §25, WEBSOCKET_PROTOCOL §20, PERFORMANCE.md. Resolves U13.
+- **Decisions:**
+  1. **Provider:** `@hocuspocus/extension-redis` 4.8.0 (exact pin, as D2 chose) carries document updates and awareness between instances over Redis Pub/Sub. Its source was read for this decision; the guarantees it gives and does not give are listed in ARCHITECTURE §25.2. It is **not** used as shipped: `ClusterSync` (`apps/collab/src/cluster.ts`) wraps it.
+  2. **Its Redis lock is switched off** (`lockTimeout: 0`). PostgreSQL row locks already serialize stores (D15); a Redis lock would make a Redis outage break PostgreSQL stores.
+  3. **U13 is resolved by server-to-server reconciliation, not by forcing clients to reconnect.** After Redis returns, and every `COLLAB_CLUSTER_RESYNC_INTERVAL_MS` (default 30 s; 0 turns the timer off), an instance (a) compares each open document's state vector with the persisted vector in PostgreSQL and merges committed content it lacks (`VersionService.catchUp`, Phase 8), (b) subscribes documents that loaded during the outage, and (c) announces each document's state vector so peers answer with what it lacks and ask for what they lack. Because Yjs updates are a CRDT, both sides' edits during the outage are merged, none is chosen over another.
+  4. **Reconnecting to Redis alone is declared insufficient and is tested as such**: with the recovery switched off, an instance that missed an update stays stale after Redis returns (TESTING §8.0e). The recovery cannot be switched off by an environment variable; the switch exists only in the test configuration.
+  5. **Why not forced reconnect (the conservative baseline in the U13 text):** it would drop every client of every document on every Redis blip and, because clients keep their local state and re-push it, would not detect anything the reconciliation does not. It remains the documented fallback if a future test shows the reconciliation does not converge.
+  6. **While Redis is down an instance keeps serving its clients.** Editing continues and is stored in PostgreSQL; clients on different instances do not see each other until Redis returns. This is a choice of availability over a stale-view guarantee, and it can be reversed by adding a refusal in `ClusterSync.afterLoad`.
+- **Known limits (not closed by this decision):** a delete-only change moves the delete set but no clock, so the PostgreSQL comparison does not detect it; the peer handshake carries it. A document whose only newer content is on an instance that died and is held by no client is lost to the extent of G3. Presence of a killed instance lingers about 34 s on the others (y-protocols' 30 s rule).
+- **Consequences:** new settings `COLLAB_CLUSTER_ENABLED`, `COLLAB_INSTANCE_ID`, `COLLAB_REDIS_PREFIX`, `COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS`, `COLLAB_CLUSTER_RESYNC_INTERVAL_MS`. Redis channels are now under `conote:collab:` (not the extension's default `hocuspocus`).
+
+### D65 – Phase 9 replicated stores and the unlocked check
+
+- **Status:** Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9).
+- **Finding:** in 4.8.0, a change that arrives from Redis is flagged so that the receiving instance does **not** run its store hooks. If the instance that took an edit dies before its debounced store, no instance stores it, although others hold it in memory. A test reproduces this (TESTING §8.0e).
+- **Decisions:** (1) each instance also schedules a store for changes that arrived from Redis (`COLLAB_CLUSTER_STORE_REPLICATED`, default true); (2) such a store first reads the persisted coverage digest without the page lock and returns at once when it equals the live document's (`DocumentStore.appendDiff(..., { skipIfUnchanged: true })`); (3) the instance that took the edit alone takes automatic snapshots; (4) `appendDiff` takes the page lock before checking that the row exists (one statement fewer in the steady state).
+- **Evidence:** a replicated store of data already stored costs 1 statement instead of 6 and writes nothing (PERFORMANCE §6); three instances stored 3 rows, not 9 (PERFORMANCE §4). The unlocked read is safe because equal coverage means the stored data already includes everything the live document holds; a document never stored has an empty digest and is never skipped.
+- **Cost:** one extra indexed read per replicated change per debounce window per instance.
+
+### D66 – Phase 9 rules that keep Redis from being a prerequisite
+
+- **Status:** Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9).
+- **Decisions:** (1) the cluster Redis connections fail fast (no offline queue, command timeout 3 s); a failed publish is counted and marks the instance degraded instead of throwing; (2) a document load never fails or waits longer than the initial-sync timeout plus 3 s because of Redis; (3) the event subscribers (`access`, `page`) wait at most 2 s for their subscription at startup and complete it when Redis appears (before this, a Redis outage at startup stopped `start()` from ever returning); (4) shutdown tolerates an unreachable Redis (before this, the extension's `onDestroy` threw); (5) channels of documents unloaded during an outage are dropped after recovery; (6) `COLLAB_CONNECTION_TIMEOUT_MS` (default 60 s) closes a connection that stops answering heartbeats.
+- **Evidence:** TESTING §8.0e (start without Redis, shutdown without Redis, document opened during an outage, heartbeat test).
+
+### D67 – Phase 9 sticky-routing evaluation (AC-9.9)
+
+- **Status:** Accepted (owner approval, 2026-11-21; proposed 2026-11-21, Phase 9). Evidence: PERFORMANCE §8. The owner's run was on one machine and did not measure load, so the condition for building sticky routing (a multi-core run) is still not met.
+- **Measured (one core, one run each, same load):** sticky routing (all clients of a document on one instance) gave delivery p95 16.2 ms against 31.7 ms spread, total CPU 6.8 % against 12.1 %, Redis traffic 20 against 143 commands/s.
+- **Decision:** do not build sticky routing in Phase 9. Revisit when a multi-core run shows per-document CPU or Redis traffic as the limit. Correctness never depends on it (any instance serves any document).
+- **Unverified:** the connection URL's ability to carry the page id for a balancer to route on was not checked against the client; a multi-core measurement was not made.
+
 ## Unresolved decisions
 
 The "Needed by" column states the phase gate for each item. Resolved items remain listed with their evidence so permanent IDs are preserved.
@@ -572,7 +610,7 @@ The "Needed by" column states the phase gate for each item. Resolved items remai
 | **U10** | Production hosting target | Single VM with Docker Compose; managed container platform + managed Postgres/Redis | DEPLOYMENT.md is written provider-neutral (container images + reference topology); owner picks a target before Phase 11 | Phase 11 |
 | **U11 – RESOLVED for snapshots (Phase 8, D63 accepted 2026-11-20); activity-log pruning remains open for Phase 10** | Retention policy for AUTO snapshots and activity logs | Keep all; prune AUTO snapshots by age/count while always keeping MANUAL and PRE_RESTORE; time-based activity pruning | Keep MANUAL and PRE_RESTORE indefinitely, prune AUTO snapshots by a policy chosen from Phase 9 growth measurements; activity logs kept until Phase 10 review | Phase 8 (snapshot rules) / Phase 10 (implementation) |
 | **U12** | Repository license and visibility (public/private) | Permissive open-source license; all rights reserved/private | Owner decides; until decided the repository states "License: not yet chosen" | Before the repository is made public (no later than Phase 11) |
-| **U13** | Which explicit Phase 9 recovery mechanism detects and reconciles documents after Redis Pub/Sub message loss? Options: force clients to reconnect to PostgreSQL-hydrated state, or implement verified server-to-server reconciliation. Redis reconnect alone is insufficient. | Select from Phase 1/9 evidence; forced reconnect is the conservative baseline | Phase 9 |
+| **U13 – RESOLVED by D64 (Phase 9, 2026-11-21; accepted by the owner 2026-11-21)** | Which explicit Phase 9 recovery mechanism detects and reconciles documents after Redis Pub/Sub message loss? | Server-to-server reconciliation: PostgreSQL comparison of open documents plus state-vector re-announcement, after every Redis reconnection and on a timer. Redis reconnect alone is proven insufficient by test. Forced client reconnect kept as the documented fallback. | Phase 9 (done; see D64) |
 
 ---
 

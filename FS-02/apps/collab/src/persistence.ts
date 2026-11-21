@@ -14,6 +14,25 @@ export class DocumentNameError extends Error {
 /** Seconds between attempts to store a document that could not be stored, capped. */
 const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 
+/** Counters of this instance's stores, for the benchmarks (PERF-05) and for tuning (D65). */
+export interface PersistenceStats {
+  /** Calls of `persist` that reached the store. */
+  stores: number;
+  /** Of those, how many wrote a `DocumentUpdate` row. */
+  rowsWritten: number;
+  /** Stores that found nothing to write after taking the page lock. */
+  noopStores: number;
+  /** Replicated stores answered by the unlocked digest check, without a transaction. */
+  skippedWithoutLock: number;
+  failures: number;
+  bytesWritten: number;
+  /** Milliseconds from the first unstored change of a document to the commit of its row (PERF-05); the newest samples. */
+  lagSamplesMs: number[];
+}
+
+/** Lag samples kept (the newest); older ones are dropped. */
+const MAX_LAG_SAMPLES = 20_000;
+
 export interface PersistenceOptions {
   compactUpdateCount: number;
   /** Test hook: replaces the delay before a failed store is tried again. */
@@ -32,8 +51,30 @@ export class DocumentPersistence {
   private readonly attempts = new Map<string, number>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private stopped = false;
+  /** When each document first changed after its last successful store (monotonic ms). */
+  private readonly firstUnstored = new Map<string, number>();
+  private readonly counters: PersistenceStats = {
+    stores: 0,
+    rowsWritten: 0,
+    noopStores: 0,
+    skippedWithoutLock: 0,
+    failures: 0,
+    bytesWritten: 0,
+    lagSamplesMs: [],
+  };
   /** The restore barrier token this instance holds for a page, if any (Phase 8, D62). */
   private restoreToken: (pageId: string) => string | undefined = () => undefined;
+
+  /** A copy of the counters (the lag samples are copied too). */
+  get stats(): PersistenceStats {
+    return { ...this.counters, lagSamplesMs: [...this.counters.lagSamplesMs] };
+  }
+
+  /** The document changed; the first change after a store starts the persistence-lag clock (PERF-05). */
+  noteChange(documentName: string): void {
+    if (!this.firstUnstored.has(documentName))
+      this.firstUnstored.set(documentName, performance.now());
+  }
 
   setRestoreTokenProvider(provider: (pageId: string) => string | undefined): void {
     this.restoreToken = provider;
@@ -95,17 +136,23 @@ export class DocumentPersistence {
    * not commit; the caller (Hocuspocus) keeps the document in memory and `scheduleRetry`
    * tries again.
    */
-  async persist(documentName: string, document: Y.Doc): Promise<void> {
+  async persist(
+    documentName: string,
+    document: Y.Doc,
+    options: { replicated?: boolean } = {},
+  ): Promise<void> {
     const pageId = this.pageId(documentName);
     let result;
+    this.counters.stores += 1;
     try {
       const token = this.restoreToken(pageId);
-      result = await this.store.appendDiff(
-        pageId,
-        document,
-        token === undefined ? {} : { restoreToken: token },
-      );
+      result = await this.store.appendDiff(pageId, document, {
+        ...(token === undefined ? {} : { restoreToken: token }),
+        // A change that came from another instance was normally stored there already.
+        ...(options.replicated === true ? { skipIfUnchanged: true } : {}),
+      });
     } catch (err) {
+      this.counters.failures += 1;
       // A page that no longer exists (its workspace was deleted) can never be stored again.
       // Retrying for ever would keep the document, and a shutdown, waiting; drop it instead.
       if (await this.pageIsGone(pageId)) {
@@ -116,6 +163,20 @@ export class DocumentPersistence {
       throw err;
     }
     this.clearRetry(documentName);
+    if (result.stored) {
+      this.counters.rowsWritten += 1;
+      this.counters.bytesWritten += result.bytes;
+      const since = this.firstUnstored.get(documentName);
+      if (since !== undefined) {
+        this.counters.lagSamplesMs.push(performance.now() - since);
+        if (this.counters.lagSamplesMs.length > MAX_LAG_SAMPLES) this.counters.lagSamplesMs.shift();
+      }
+    } else if (result.skippedWithoutLock === true) {
+      this.counters.skippedWithoutLock += 1;
+    } else {
+      this.counters.noopStores += 1;
+    }
+    this.firstUnstored.delete(documentName);
     if (result.stored) {
       this.logger.debug(
         { pageId, bytes: result.bytes, pendingRows: result.pendingRows },

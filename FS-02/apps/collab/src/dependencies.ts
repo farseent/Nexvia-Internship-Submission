@@ -7,6 +7,8 @@ import { checkRedis, createRedisClient, createSubscriberClient } from './redis.j
 /** Runtime dependencies of the collab server. Tests can substitute their own. */
 export interface Dependencies {
   prisma: PrismaClient;
+  /** The Redis URL, for the cross-instance synchronization (it creates its own connections). */
+  redisUrl: string;
   /** A new connection for subscribing to Redis channels (a subscribing connection can do nothing else). */
   createSubscriber(): Redis;
   /** Publish on a Redis channel (page events). Best effort: never throws. */
@@ -28,6 +30,7 @@ export function createDependencies(
 
   return {
     prisma,
+    redisUrl: env.REDIS_URL,
     createSubscriber: () => {
       const subscriber = createSubscriberClient(env.REDIS_URL);
       subscriber.on('error', (err: Error) => {

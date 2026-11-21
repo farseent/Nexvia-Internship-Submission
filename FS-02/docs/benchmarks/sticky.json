@@ -1,0 +1,59 @@
+{
+  "scenario": "sticky",
+  "at": "2026-11-21T04:46:32.639Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": [
+    {
+      "routing": "spread",
+      "documents": 3,
+      "clientsPerDocument": 11,
+      "changesPerSecondInTotal": 21,
+      "deliveryLatencyMs": {
+        "n": 3150,
+        "p50": 13.42,
+        "p95": 31.74,
+        "p99": 49.06,
+        "max": 61.16,
+        "mean": 14.62
+      },
+      "deliveries": 3150,
+      "cpuPercentOfOneCorePerInstance": [
+        4.8,
+        3.3,
+        4
+      ],
+      "cpuPercentTotal": 12.1,
+      "redisCommandsPerSecond": 143,
+      "redisKiloBytesPerSecond": 47.1
+    },
+    {
+      "routing": "sticky",
+      "documents": 3,
+      "clientsPerDocument": 11,
+      "changesPerSecondInTotal": 21,
+      "deliveryLatencyMs": {
+        "n": 3150,
+        "p50": 5.19,
+        "p95": 16.15,
+        "p99": 26.03,
+        "max": 44.06,
+        "mean": 6.77
+      },
+      "deliveries": 3150,
+      "cpuPercentOfOneCorePerInstance": [
+        2.5,
+        2.5,
+        1.8
+      ],
+      "cpuPercentTotal": 6.8,
+      "redisCommandsPerSecond": 20,
+      "redisKiloBytesPerSecond": 6.6
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 # CoNote – Deployment
 
 **Status:** Local Phase 1a infrastructure and service shells are implemented; Phase 2 added the authentication environment variables below (not exercised in a production deployment). PostgreSQL/Redis Compose services, baseline migrations, CI and local checks have been reported successful. Production packaging/deployment and Docker app-image build are not verified; Phase 11 remains outstanding.
-**Last updated:** 2026-11-13
+**Last updated:** 2026-11-21 (Phase 9: cluster settings, Redis channels, runbook, sticky-routing note; local two-instance check added to §9)
 
 Decision IDs (`D#`, `U#`) are in [DECISIONS.md](DECISIONS.md); architecture in [ARCHITECTURE.md](ARCHITECTURE.md); protocol in [WEBSOCKET_PROTOCOL.md](WEBSOCKET_PROTOCOL.md). The production hosting target is **unresolved (U10)**, so this document is **provider-neutral**: it defines container images, topology, configuration, operations and runbooks that work on a single VM with Docker Compose or on a managed container platform. It is finalized and executed in Phase 11 (IMPLEMENTATION_PLAN AC-11.1 … AC-11.8). Production topology, hardening and runbooks below remain plans unless explicitly identified as implemented in the Phase 1a notes above.
 
@@ -118,7 +118,13 @@ Environment variable names for shared, API, collab and web are **implemented as 
 | `COLLAB_REVALIDATE_INTERVAL_MS` | Periodic revalidation (D22) | `60000` |
 | `COLLAB_STORE_DEBOUNCE_MS` / `COLLAB_STORE_MAX_DEBOUNCE_MS` | Store debounce (D15; names confirmed against Hocuspocus, V1) | `2000` / `10000` |
 | `COLLAB_COMPACT_UPDATE_COUNT` | Compaction threshold (D15) | `200` |
-| `COLLAB_AWAIT_INITIAL_SYNC_MS` | Redis extension `awaitInitialSyncTimeout` (D2) | `1000` |
+| `COLLAB_CLUSTER_ENABLED` | Cross-instance synchronization through Redis (Phase 9, D64). `false` for a single instance | `true` |
+| `COLLAB_INSTANCE_ID` | Name of the instance in logs and in the Redis protocol; letters, digits, `.`, `-`, `_`, at most 64. **Set a stable, unique value per instance** (a random one is made when unset) | random per process |
+| `COLLAB_REDIS_PREFIX` | Prefix of the document channels. All instances of one deployment **must share it**; two deployments on one Redis must differ | `conote:collab` |
+| `COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS` | How long a document load waits for a peer's state (the extension's `awaitInitialSyncTimeout`, D2; replaces the earlier name `COLLAB_AWAIT_INITIAL_SYNC_MS`, which the code never read) | `1000` |
+| `COLLAB_CLUSTER_RESYNC_INTERVAL_MS` | Anti-entropy interval of the U13 recovery (D64); `0` turns the timer off (the recovery after a Redis reconnection always runs) | `30000` |
+| `COLLAB_CLUSTER_STORE_REPLICATED` | Also store changes that arrived from another instance (D65) | `true` |
+| `COLLAB_CONNECTION_TIMEOUT_MS` | Close a connection that sent nothing for this long (heartbeat) | `60000` |
 | Message-size, rate and connection-limit variables | Abuse protection (WEBSOCKET_PROTOCOL §11) | defined in Phase 6, tuned in Phase 9 |
 
 ### Redis names
@@ -128,7 +134,8 @@ Environment variable names for shared, API, collab and web are **implemented as 
 | Access-event channel | `conote:events:access` |
 | Page-event channel | `conote:events:page` |
 | Rate-limit key prefix | `conote:rl:` |
-| Hocuspocus extension prefix | `conote:hocuspocus` (option name to verify) |
+| Document channels | `<COLLAB_REDIS_PREFIX>:<documentName>`, for example `conote:collab:page:<pageId>` |
+| Per-instance reply channels | `<COLLAB_REDIS_PREFIX>#reply:<COLLAB_INSTANCE_ID>` |
 
 ## 5. Secrets and keys
 
@@ -146,10 +153,12 @@ No secret appears in the repository, images, logs or CI output. `.env.example` c
 
 **Collab entry (`collab.<domain>`):**
 
-- WebSocket upgrade supported end-to-end; idle timeout longer than the provider's heartbeat interval (confirm in Phase 6).
+- WebSocket upgrade supported end-to-end; idle timeout longer than `COLLAB_CONNECTION_TIMEOUT_MS` is **not** required (the server closes silent connections itself) but the balancer's idle timeout must not be shorter than the clients' ping interval or healthy idle connections will be cut (the interval was not measured in Phase 9; check the provider settings).
+- Any instance may serve any document: round-robin or least-connections is correct. Sticky routing by document would roughly halve load in the measured case but is not implemented (D67, PERFORMANCE §8).
+- When an instance stops answering `/health`, stop sending it new connections; existing connections move by themselves when it closes them.
 - TLS termination; forwards the `Origin` header unchanged.
 - No stickiness required; connection draining supported (§9).
-- Per-IP connection-rate limiting at the edge in addition to the application's limits (Phase 9).
+- Per-IP connection-rate limiting at the edge in addition to the application's limits (not done in Phase 9; the application limits are per instance and per user **per instance**: a global per-user limit does not exist, so a user can hold the per-user limit on every instance).
 
 ## 7. Data services
 
@@ -164,8 +173,8 @@ No secret appears in the repository, images, logs or CI output. `.env.example` c
 ### Redis 7.x (disposable)
 
 - Used for Hocuspocus fan-out, rate limiting and access events (D2, D14). Correctness never depends on its contents.
-- Persistence (RDB/AOF) is optional and not relied upon. Instances may reconnect after a Redis restart, but Pub/Sub messages missed during the outage are not replayed. Cross-instance live-document reconvergence requires an explicit recovery mechanism; Redis reconnection alone is insufficient (U13/G5, Phase 9).
-- Set a memory limit and an eviction policy appropriate for rate-limit counters (confirmed in Phase 9). Protect with authentication/network isolation; TLS if it crosses untrusted networks.
+- Persistence (RDB/AOF) is optional and not relied upon. Instances reconnect after a Redis restart, but Pub/Sub messages missed during the outage are not replayed. Each instance therefore runs the explicit recovery procedure of D64 (PostgreSQL comparison plus state-vector announcement) when Redis returns and every `COLLAB_CLUSTER_RESYNC_INTERVAL_MS`; reconnecting alone is insufficient (tested). Measured: about 1 s from Redis being back to converged documents (PERFORMANCE §5).
+- Set a memory limit and an eviction policy appropriate for rate-limit counters. **Not tested in Phase 9**: the document channels carry no stored data, so eviction only affects rate-limit keys; use `noeviction` or `volatile-*` and watch the memory figure. At 3 instances and 20 changes per second on one document, Redis handled about 130 commands and 44 KB per second (PERFORMANCE §2). Protect with authentication/network isolation; TLS if it crosses untrusted networks.
 
 ### Object storage (S3-compatible)
 
@@ -178,7 +187,7 @@ No secret appears in the repository, images, logs or CI output. `.env.example` c
 
 - `GET /health` is liveness only: it reports whether the process is alive and does not fail because a dependency is unavailable.
 - API `GET /ready` requires PostgreSQL connectivity and a compatible schema. Redis health is included as a separate dependency field; Redis failure alone does not remove the API from service.
-- Collab exposes equivalent liveness and readiness diagnostics. PostgreSQL is required for safe hydration and durable stores. Redis-down is reported as `degraded` for multi-instance propagation; instances must not serve known-stale documents as healthy.
+- Collab exposes equivalent liveness and readiness diagnostics. PostgreSQL is required for safe hydration and durable stores. Redis-down is reported as `degraded` by `/ready` for multi-instance propagation. **As built, instances keep serving their own clients during an outage** (D64 item 6) rather than refusing; this is a decision awaiting the owner's acceptance.
 - Redis-dependent API features must follow the scoped failure policy in API_CONTRACTS.md: bounded fallback only when explicitly safe; security-sensitive rate limits fail closed rather than silently disabling protection.
 - Monitoring and load balancer decisions must use the readiness signal for the service being routed to, not a shared all-dependencies-green check.
 
@@ -195,9 +204,23 @@ No secret appears in the repository, images, logs or CI output. `.env.example` c
 ## 9. Collab operations
 
 - **Graceful shutdown (SIGTERM):** the instance stops accepting connections, sends `server.shutting_down`, flushes stores for all loaded documents, closes connections with the "restarting" close code, then exits. Orchestrator termination grace period must exceed the flush time observed in Phase 9.
-- **Rolling restarts:** drain one instance, wait for readiness of its replacement, then the next. Clients reconnect to any instance (D2). Verified by AC-9.8.
+- **Rolling restarts:** drain one instance, wait until its replacement answers `/health` (about 0.7 s in the benchmark), then the next. Clients reconnect to any instance (D2). Tested with two instances and 4–8 clients: no typed edit was lost (TESTING §8.0e). Give the termination grace period at least a few seconds more than the one-second unload delay of the Redis extension plus the store flush; with many open documents it was not measured.
+- **Redis outage:** see the runbook in §14. During the outage each instance logs `redis unavailable: cross-instance sync is paused…` once; when Redis returns it logs `redis is back: running the recovery procedure`. **`/ready` does not show the cluster state** (only whether Redis answers); alert on those log lines until a metric exists (Phase 11).
+- **Kill of an instance:** its users' cursors linger about 34 s on the other instances before they expire.
+- **Memory and connections (one core, light load):** about 130 MB over the idle process for 1,000 connections on 200 documents, and no connection failed at that size (PERFORMANCE §3). Do not treat this as a capacity limit.
 - **Crash:** clients reconnect elsewhere; the document is rebuilt from PostgreSQL; edits not yet committed survive only in still-connected clients (G3).
 - **Scaling:** add instances to raise connection capacity and availability. Because every instance handles every message for documents open on several instances, scaling does not reduce per-document load; sticky routing is the documented future optimization (D2, AC-9.9).
+
+### Checking several collab instances on one machine (verified by the owner, 2026-11-21)
+
+Start each instance with its own port and instance id and the same `COLLAB_REDIS_PREFIX` (the value in `.env`):
+
+```bash
+COLLAB_INSTANCE_ID=collab-1 COLLAB_PORT=4100 pnpm dev:collab
+COLLAB_INSTANCE_ID=collab-2 COLLAB_PORT=4101 pnpm dev:collab
+```
+
+Both should log `cluster: "connected"`. Browsers learn the collab address from the API (`collabUrl`, taken from `COLLAB_URL`), so one API gives every browser the same instance. To pin two browsers to different instances without a load balancer, start the API with `COLLAB_URL=ws://localhost:4100`, open the first browser, restart the API with `COLLAB_URL=ws://localhost:4101` and open the second; do not reload the first browser afterwards, because a reload fetches the new address. The browser's DevTools (Network, WS) shows which port each uses. For the outage check, `docker compose -f infra/docker-compose.yml stop redis` for about ten seconds and then `start redis`; both browsers should show all text without a reload, and the collab logs should show `redis unavailable` and `redis is back`. In production a load balancer in front of the instances replaces the `COLLAB_URL` switching.
 
 ## 10. Observability
 
@@ -248,7 +271,7 @@ Selection criteria: WebSocket support with long idle timeouts, ability to drain 
 |---|---|
 | Collab instance down | Check health; clients reconnect automatically; restart instance; verify store logs and persistence lag; confirm documents load |
 | High persistence lag or store failures | Check PostgreSQL health/locks; look for long transactions on `document_states`; reduce load; do not claim durability while stores fail (G2) |
-| Redis down | Mark multi-instance collaboration degraded; PostgreSQL-backed API remains ready if its own requirements are met. Do not assume live documents reconverge when Redis returns. Restore Redis, detect documents/instances that may have missed Pub/Sub messages, execute the explicit Phase 9 resync/reconciliation procedure, verify state vectors and persisted state, and only then clear degraded status. No PostgreSQL restore is needed unless integrity checks show committed data loss. |
+| Redis down | Mark multi-instance collaboration degraded; PostgreSQL-backed API remains ready if its own requirements are met. Instances keep serving their own clients and keep storing in PostgreSQL; changes do not cross instances until Redis returns (cursors and edits of people on other instances stop appearing). Restore Redis. Each instance then runs the D64 recovery by itself (look for `redis is back: running the recovery procedure` and the absence of `recovery procedure failed` in the logs); no manual resync is needed. If a document still differs between instances, ask an affected client to reload (it hydrates from PostgreSQL and a peer) and report it: that would be a defect in the recovery. Do not restart all instances as a first step (that was the only repair before Phase 9). No PostgreSQL restore is needed unless integrity checks show committed data loss. |
 | PostgreSQL outage | API readiness returns `503`; collab readiness returns `503` because durable hydration/stores are unavailable. Do not claim edits are durable; preserve in-memory/client state where possible, restore PostgreSQL, then verify store retries and document recovery. |
 | Suspected token key compromise | Rotate key pair (§5), revoke affected sessions if needed |
 | Data loss report for a document | Check persisted updates/state and snapshots; restore a snapshot via the restore procedure; compare with the G3 at-risk window description |

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { Server, type Document, type Extension } from '@hocuspocus/server';
+import { Server, isTransactionOrigin, type Document, type Extension } from '@hocuspocus/server';
 import type { Logger } from 'pino';
 import { DocumentStore } from '@conote/db';
 import {
@@ -13,6 +13,7 @@ import {
 } from '@conote/shared';
 import { AccessController, isRefusal } from './access-control.js';
 import { AccessEventListener } from './access-events.js';
+import { ClusterSync } from './cluster.js';
 import type { Clock, CollabConfig } from './config.js';
 import { ConnectionRegistry, type CollabContext } from './connection-registry.js';
 import type { Dependencies } from './dependencies.js';
@@ -51,6 +52,8 @@ export interface CollabServer {
   readonly presence: PresenceGuard;
   readonly versions: VersionService;
   readonly pageEvents: PageEventListener;
+  /** Cross-instance synchronization through Redis (Phase 9); a no-op object when disabled. */
+  readonly cluster: ClusterSync;
   /** Port actually bound (useful with port 0). */
   readonly port: number;
   start(): Promise<void>;
@@ -110,7 +113,7 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
   const allowedOrigins = new Set(config.allowedOrigins);
   let stopping = false;
   // The Hocuspocus instance exists only after the hooks below; the version service reaches it lazily.
-  const versions = new VersionService(
+  const versions: VersionService = new VersionService(
     dependencies.prisma,
     new DocumentStore(dependencies.prisma),
     persistence,
@@ -124,6 +127,15 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     options.versionHooks,
   );
   const pageEvents = new PageEventListener(dependencies.createSubscriber(), versions, logger);
+  const cluster: ClusterSync = new ClusterSync(
+    config.cluster,
+    {
+      redisUrl: dependencies.redisUrl,
+      store: new DocumentStore(dependencies.prisma),
+      catchUp: (pageId) => versions.catchUp(pageId),
+    },
+    logger.child({ component: 'cluster', instanceId: config.cluster.instanceId }),
+  );
 
   async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = (request.url ?? '/').split('?')[0];
@@ -292,14 +304,23 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     },
 
     /** An accepted change by a client: logged for contributors, and the page is marked changed. */
-    async onChange({ context }) {
+    async onChange({ context, documentName, transactionOrigin }) {
       if (isCollabContext(context)) versions.recordEdit(context);
+      // Persistence lag (PERF-05) counts changes this instance took, not those relayed to it.
+      if (!isTransactionOrigin(transactionOrigin) || transactionOrigin.source !== 'redis') {
+        persistence.noteChange(documentName);
+      }
     },
 
     async onStoreDocument({ documentName, document, instance, ...payload }) {
+      // A store scheduled because a change arrived from another instance (D65).
+      const replicated =
+        isTransactionOrigin(payload.lastTransactionOrigin) &&
+        payload.lastTransactionOrigin.source === 'redis';
       try {
-        await persistence.persist(documentName, document);
-        await versions.autoSnapshotIfDue(documentName, document);
+        await persistence.persist(documentName, document, { replicated });
+        // The instance that took the edit takes the automatic snapshot.
+        if (!replicated) await versions.autoSnapshotIfDue(documentName, document);
       } catch (err) {
         logger.error(
           {
@@ -348,17 +369,18 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     },
   };
 
-  const server = new Server<CollabContext>({
+  const server: Server<CollabContext> = new Server<CollabContext>({
     name: `conote-${SERVICE}`,
     port: config.port,
     address: config.address,
     quiet: true,
     stopOnSignals: false,
+    timeout: config.connectionTimeoutMs,
     debounce: config.storeDebounceMs,
     maxDebounce: config.storeMaxDebounceMs,
     unloadImmediately: false,
     websocketOptions: { maxPayload: config.maxPayloadBytes },
-    extensions: [hooks],
+    extensions: cluster.extension === undefined ? [hooks] : [cluster.extension, hooks],
   });
 
   async function waitForStores(timeoutMs: number): Promise<boolean> {
@@ -387,6 +409,7 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     presence,
     versions,
     pageEvents,
+    cluster,
     get port() {
       return server.address.port;
     },
@@ -394,10 +417,17 @@ export function buildCollabServer(options: BuildServerOptions): CollabServer {
     async start() {
       await verifier.assertKeysUsable();
       await server.listen();
-      await events.start();
-      await pageEvents.start();
+      // Each waits a bounded time for Redis; do the waits side by side, not one after another.
+      await Promise.all([events.start(), pageEvents.start(), cluster.start()]);
       revalidation.start();
-      logger.info({ port: server.address.port }, 'collab server listening');
+      logger.info(
+        {
+          port: server.address.port,
+          cluster: cluster.status,
+          instanceId: config.cluster.instanceId,
+        },
+        'collab server listening',
+      );
     },
 
     async stop() {

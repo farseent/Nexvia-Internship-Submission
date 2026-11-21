@@ -46,8 +46,10 @@ export interface AppendResult {
   seq: bigint | null;
   /** Size of the stored diff in bytes (0 when nothing was stored). */
   bytes: number;
-  /** Update rows not yet folded into the state, after this call. */
+  /** Update rows not yet folded into the state, after this call (0 when `skippedWithoutLock`). */
   pendingRows: number;
+  /** True when `skipIfUnchanged` answered without opening a transaction. */
+  skippedWithoutLock?: boolean;
 }
 
 export interface LoadResult {
@@ -103,6 +105,15 @@ export interface StoreOptions {
   /** The restore barrier token of the caller; lets the holder store while the barrier is active. */
   restoreToken?: string;
   now?: Date;
+  /**
+   * Phase 9 (D65): before taking the page lock, read the persisted coverage digest and return
+   * at once when it equals the live document's. Used for changes that arrived from another
+   * instance, which that instance normally stored already: the check costs one indexed read
+   * instead of a locked transaction. The read is unlocked, which is safe because equal
+   * coverage means the stored data already includes everything this document holds; the
+   * result's `pendingRows` is then 0 (not read).
+   */
+  skipIfUnchanged?: boolean;
 }
 
 export interface BarrierRequest {
@@ -131,11 +142,44 @@ export class DocumentStore {
    * decided on the document's full coverage (`encodeDocumentCoverage`), not on the vector.
    */
   async appendDiff(pageId: string, doc: Y.Doc, options: StoreOptions = {}): Promise<AppendResult> {
+    if (options.skipIfUnchanged === true && (await this.isAlreadyStored(pageId, doc))) {
+      return { stored: false, seq: null, bytes: 0, pendingRows: 0, skippedWithoutLock: true };
+    }
     return this.prisma.$transaction(async (tx) => {
       const state = await this.lockState(tx, pageId, true);
       assertBarrierAllows(pageId, state, options);
       return this.storeDiff(tx, pageId, state, doc);
     }, TRANSACTION_OPTIONS);
+  }
+
+  /**
+   * The persisted state vector of each given page that has stored state (one query). An
+   * instance compares it with its open documents to notice committed content it has not
+   * received (D64, stale-document detection); a page without stored state is left out.
+   */
+  async persistedVectors(pageIds: readonly string[]): Promise<Map<string, Uint8Array>> {
+    const vectors = new Map<string, Uint8Array>();
+    if (pageIds.length === 0) return vectors;
+    const rows = await this.prisma.documentState.findMany({
+      where: { pageId: { in: [...pageIds] } },
+      select: { pageId: true, persistedStateVector: true },
+    });
+    for (const row of rows) vectors.set(row.pageId, row.persistedStateVector);
+    return vectors;
+  }
+
+  /** True when the stored coverage digest equals the live document's (unlocked read, see `skipIfUnchanged`). */
+  private async isAlreadyStored(pageId: string, doc: Y.Doc): Promise<boolean> {
+    const digest = digestOf(encodeDocumentCoverage(doc));
+    const row = await this.prisma.documentState.findUnique({
+      where: { pageId },
+      select: { persistedDigest: true },
+    });
+    return (
+      row !== null &&
+      row.persistedDigest.length > 0 &&
+      Buffer.compare(digest, row.persistedDigest) === 0
+    );
   }
 
   /**
@@ -285,32 +329,31 @@ export class DocumentStore {
     pageId: string,
     create: boolean,
   ): Promise<LockedState | null> {
-    if (create) {
-      const existing = await tx.documentState.findUnique({
-        where: { pageId },
-        select: { pageId: true },
+    const lockRow = () =>
+      tx.$queryRaw<{ locked: number }[]>`
+        SELECT 1 AS locked FROM document_states WHERE "pageId" = ${pageId}::uuid FOR UPDATE`;
+    // Lock first: in the steady state the row exists, so no existence check precedes it (D65).
+    let locked = await lockRow();
+    if (locked.length === 0) {
+      if (!create) return null;
+      const page = await tx.page.findUnique({ where: { id: pageId }, select: { id: true } });
+      if (!page) throw new DocumentPageNotFoundError(pageId);
+      const empty = new Y.Doc();
+      await tx.documentState.createMany({
+        data: [
+          {
+            pageId,
+            foldedState: toBytes(Y.encodeStateAsUpdate(empty)),
+            persistedStateVector: toBytes(Y.encodeStateVector(empty)),
+            persistedDigest: new Uint8Array(0),
+            foldedSeq: 0n,
+          },
+        ],
+        skipDuplicates: true,
       });
-      if (!existing) {
-        const page = await tx.page.findUnique({ where: { id: pageId }, select: { id: true } });
-        if (!page) throw new DocumentPageNotFoundError(pageId);
-        const empty = new Y.Doc();
-        await tx.documentState.createMany({
-          data: [
-            {
-              pageId,
-              foldedState: toBytes(Y.encodeStateAsUpdate(empty)),
-              persistedStateVector: toBytes(Y.encodeStateVector(empty)),
-              persistedDigest: new Uint8Array(0),
-              foldedSeq: 0n,
-            },
-          ],
-          skipDuplicates: true,
-        });
-        empty.destroy();
-      }
+      empty.destroy();
+      locked = await lockRow();
     }
-    const locked = await tx.$queryRaw<{ locked: number }[]>`
-      SELECT 1 AS locked FROM document_states WHERE "pageId" = ${pageId}::uuid FOR UPDATE`;
     if (locked.length === 0) return null;
     // Read after the lock: this is the state every concurrent writer has committed so far.
     return tx.documentState.findUniqueOrThrow({

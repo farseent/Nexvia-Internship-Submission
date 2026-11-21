@@ -1,3 +1,4 @@
+import { subscribeWithin } from './redis.js';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import { ACCESS_EVENTS_CHANNEL, accessEventSchema, type AccessEvent } from '@conote/shared';
@@ -54,12 +55,9 @@ export class AccessEventListener {
     this.subscriber.on('message', (channel: string, raw: string) => {
       if (channel === ACCESS_EVENTS_CHANNEL) void this.handle(raw);
     });
-    try {
-      await this.subscriber.subscribe(ACCESS_EVENTS_CHANNEL);
-    } catch (err) {
-      // Redis may be down at startup: ioredis keeps retrying and resubscribes when it is back.
+    // Redis may be down at startup: the subscription is queued and applied when it is back.
+    if (!(await subscribeWithin(this.subscriber, ACCESS_EVENTS_CHANNEL))) {
       this.logger.warn(
-        { err: { name: (err as Error).name } },
         'could not subscribe to access events yet; periodic revalidation still applies',
       );
     }

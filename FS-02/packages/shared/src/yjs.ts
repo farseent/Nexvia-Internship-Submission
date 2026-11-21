@@ -135,3 +135,12 @@ export function synchronizeReplicas(a: DocumentReplica, b: DocumentReplica): voi
   b.applyRemoteUpdate(missingInB);
   a.applyRemoteUpdate(missingInA);
 }
+
+/**
+ * True when `stored` has a clock that `live` lacks, that is, committed content this replica has
+ * not received (D64 stale-document detection). A change that only deletes content moves the
+ * delete set but no clock, so it is not detected here; the peer handshake carries it.
+ */
+export function storedAheadOfLive(stored: Uint8Array, live: Uint8Array): boolean {
+  return !stateVectorCovers(live, stored);
+}

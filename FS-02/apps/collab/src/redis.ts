@@ -46,3 +46,29 @@ export async function checkRedis(redis: Redis, timeoutMs = 1000): Promise<Depend
     if (timer) clearTimeout(timer);
   }
 }
+
+/**
+ * Subscribe a subscriber connection without letting startup wait for Redis (Phase 9). The
+ * connection queues the command while Redis is down and applies it, and every later
+ * resubscription, when Redis is back; this only bounds how long the caller waits.
+ * Returns false when the subscription was not confirmed in time.
+ */
+export async function subscribeWithin(
+  subscriber: Redis,
+  channel: string,
+  timeoutMs = 2_000,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const subscribed = subscriber.subscribe(channel).then(
+    () => true,
+    () => false,
+  );
+  try {
+    return await Promise.race([subscribed, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

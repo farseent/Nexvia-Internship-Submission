@@ -1,7 +1,7 @@
 # CoNote – Architecture
 
 **Status:** Phase 1 infrastructure and **Phase 2 authentication (§10)** are implemented and locally verified by the owner. Decisions D41–D47 were accepted by the owner on 2026-11-13. The collaboration architecture, persistence model and the remaining product features remain design-only.
-**Last updated:** 2026-11-20 (Phase 8 verified locally by the owner and D62 and D63 accepted, §24; Phase 6 added, §23; Phase 6 verified locally and D58–D60 accepted; Phase 7 presence, awareness §6/§18 of WEBSOCKET_PROTOCOL, verified locally by the owner on 2026-11-19 and D61 accepted)
+**Last updated:** 2026-11-21 (Phase 9 Redis scaling as built, §25; verified locally by the owner and D64–D66 accepted). Previously 2026-11-20 (Phase 8 verified locally by the owner and D62 and D63 accepted, §24; Phase 6 added, §23; Phase 6 verified locally and D58–D60 accepted; Phase 7 presence, awareness §6/§18 of WEBSOCKET_PROTOCOL, verified locally by the owner on 2026-11-19 and D61 accepted)
 
 Decision IDs (`D#`) and unresolved IDs (`U#`) are defined in [DECISIONS.md](DECISIONS.md). Requirement IDs (`FR-*`, `NFR-*`, `PERF-*`) are in [PROJECT_MASTER.md](PROJECT_MASTER.md). Statements marked **(to verify)** are assumptions that the Phase 1 spike or a named phase must confirm before they are relied on (collected in §18).
 
@@ -230,7 +230,7 @@ Behaviour per the official Redis extension documentation:
 - Redis Pub/Sub is at-most-once delivery. Messages published while an instance is disconnected are not replayed automatically.
 - An instance that remains connected to Redis while another instance is disconnected may continue to hold a divergent in-memory document. Redis reconnection by itself is not a reconciliation protocol.
 - PostgreSQL remains authoritative for committed updates. Uncommitted updates held only by a failed instance may be lost within the G3 at-risk window.
-- Phase 9 must implement and test an explicit recovery procedure. The conservative baseline is to mark the affected instance/document generation as requiring resync, stop serving stale state, flush what can be committed, then force clients to reconnect to a document hydrated from PostgreSQL. A surviving client may contribute newer uncommitted Yjs updates during its normal handshake. A server-to-server reconciliation design is acceptable only if independently tested.
+- Phase 9 must implement and test an explicit recovery procedure. The conservative baseline is to mark the affected instance/document generation as requiring resync, stop serving stale state, flush what can be committed, then force clients to reconnect to a document hydrated from PostgreSQL. A surviving client may contribute newer uncommitted Yjs updates during its normal handshake. A server-to-server reconciliation design is acceptable only if independently tested. **[Phase 9 (2026-11-21): done. Server-to-server reconciliation was chosen and tested; see §25.3 and D64. The forced-reconnect baseline stayed the documented fallback.]**
 - Until this procedure passes the two-instance outage tests, do not claim that live instances automatically reconverge after Redis returns. Keep the document unavailable or force reconnect rather than silently serving known-stale state.
  If the timeout elapses, the instance proceeds with the stored state and later syncs through Yjs.
 - Stores are mutually exclusive across instances in the extension; CoNote additionally serializes stores with a database row lock (§8.2) so correctness does not rely on Redis locking.
@@ -435,7 +435,7 @@ Details are in DEPLOYMENT.md.
 |---|---|---|---|
 | Client network drop | Client stops syncing | Provider reconnects with a fresh token; sync handshake exchanges missed updates (G3) | Reconnection tests |
 | Collab instance crash | Connections drop; uncommitted updates in its memory lost unless clients hold them | Clients reconnect to another instance; document rebuilt from PostgreSQL (G3, G4) | Recovery tests |
-| Redis outage | Cross-instance propagation and Redis-backed event/rate-limit services degrade | PostgreSQL remains authoritative for committed data. Redis reconnection does not replay missed messages; detect stale documents and run the explicit resync/reconciliation procedure before marking multi-instance collaboration healthy (G5/U13). | Redis outage/recovery tests |
+| Redis outage | Cross-instance propagation and Redis-backed event/rate-limit services degrade | PostgreSQL remains authoritative for committed data. Redis reconnection does not replay missed messages; detect stale documents and run the explicit resync/reconciliation procedure before marking multi-instance collaboration healthy (G5/U13). | Redis outage/recovery tests | **[As built: §25.4.]**
 | PostgreSQL outage | Stores and loads fail | Collab keeps documents in memory and retries stores; new document loads fail; API returns error envelope; no data claimed durable (G2) | Database failure tests |
 | API outage | No REST, no new tokens | Existing WebSocket sessions continue until revalidation needs PostgreSQL (not the API) | Failure tests |
 | Duplicate store from several instances | Redundant `DocumentUpdate` rows | Harmless (idempotent merge); minimized by row-locked diffs (§8.2) | Spike (U3) |
@@ -462,7 +462,7 @@ Hocuspocus hook payloads use web-standard `Request`/`Headers` since v4; document
 | V1 | Debounce option names/defaults and store-on-unload behaviour in Hocuspocus 4.8 | Phase 1 spike (U3) |
 | V2 | Whether the store hook fires for updates that arrive via Redis; duplicate-write behaviour | Phase 1 spike (U3) |
 | V3 | Awareness propagation across instances and from read-only connections; awareness expiry values | Phase 1 spike (U4) |
-| V4 | Redis Pub/Sub message loss, stale-document detection and feasibility of forced reconnect/resynchronization | Phase 1 spike (U3); production recovery verified in Phase 9 (U13) |
+| V4 | Redis Pub/Sub message loss, stale-document detection and feasibility of forced reconnect/resynchronization | Phase 1 spike (U3); production recovery verified in Phase 9 (U13) | **[Phase 9: verified, see §25.2–25.4 and TESTING §8.0e.]**
 | V5 | Token delivered in the provider's authentication message, not in the URL | Phase 1 spike / Phase 6 |
 | V6 | Provider accepts a token function for fresh tokens on reconnect | Phase 6 |
 | V7 | Next.js rewrite forwarding of `Origin`, `Host`, `X-Forwarded-*`, `Set-Cookie` | **Resolved in Phase 2** (Next.js 16.4.6, dev and `next start`): `Origin`, `Cookie`, `Content-Type`, body and `Set-Cookie` pass through; `X-Forwarded-Host` is added; **`X-Forwarded-For`/`-Proto` are not added and a client-supplied `X-Forwarded-For` passes unmodified** (§10.3) |
@@ -619,3 +619,67 @@ Browser                                   API (Fastify)                    Colla
 | Snapshot content invalid for the current schema | restore refused before anything changes |
 | Redis down | `comments.changed` and `document.restored` missed; clients refetch on reconnect; another instance catches up at its next restore or reload |
 | Automatic snapshot fails | logged; the next store tries again; the document is already stored |
+
+## 25. Phase 9: Redis scaling and performance (2026-11-21)
+
+Status: implemented and tested in a preparation environment (TESTING §8.0e) and verified by the owner on 2026-11-21 (two instances in real browsers, a Redis outage, the stop of one instance; HANDOVER §14.9); benchmarks in [PERFORMANCE.md](PERFORMANCE.md) were taken on one virtual CPU and are not capacity figures. Decisions D64–D66 were accepted by the owner on 2026-11-21. Message-level detail is in WEBSOCKET_PROTOCOL §20.
+
+### 25.1 What now exists
+
+| Piece | Where | What it does |
+|---|---|---|
+| `ClusterSync` | `apps/collab/src/cluster.ts` | Wraps `@hocuspocus/extension-redis` 4.8.0 (pinned). Tracks Redis health, never lets Redis block a load or a store, runs the recovery procedure, counts traffic (`stats()`). Switched off by `COLLAB_CLUSTER_ENABLED=false`. |
+| Replicated stores | `cluster.ts` (`onChange`), `server.ts` (`onStoreDocument`), `persistence.ts` | Changes that arrived from another instance are also stored here, through an unlocked "already stored?" check (D65). |
+| `DocumentStore.persistedVectors`, `appendDiff({ skipIfUnchanged })` | `packages/db/src/document-store.ts` | One-query read of persisted state vectors for stale-document detection; the fast path of a replicated store; lock-first ordering. |
+| `storedAheadOfLive` | `packages/shared/src/yjs.ts` | True when PostgreSQL holds a clock the live document lacks. |
+| Persistence counters | `PersistenceStats` in `persistence.ts` | Stores, rows written, no-op stores, stores skipped without a lock, bytes, lag samples (PERF-05). |
+| Bounded subscriber start | `subscribeWithin` in `redis.ts` | Event subscribers no longer hold up startup when Redis is down (D66). |
+| Heartbeat | Hocuspocus `timeout` = `COLLAB_CONNECTION_TIMEOUT_MS` | Closes a connection that stops answering. |
+
+### 25.2 What the extension guarantees, and what it does not (read from the 4.8.0 source, then tested)
+
+- **It relays by state-vector handshake, not by forwarding each update.** A change is announced as a Yjs "sync step 1" (the sender's state vector) on the document's channel; a peer answers on the sender's own reply channel with the updates the sender lacks, and with its own state vector, to which the sender answers in turn. One edit therefore costs about 4 Redis commands and 1.3 KB across instances (PERFORMANCE §1). Because every announcement carries the whole state vector, **a later change on any instance repairs earlier missed messages for that document. An idle document is not repaired**: nothing is announced.
+- **Pub/Sub is at-most-once and not replayed.** After an outage the instance that was cut off stays stale until something is announced (tested: it stayed stale for 2 s after reconnecting, with recovery switched off).
+- **Awareness is relayed as received.** The origin instance has already stamped the identity (WEBSOCKET_PROTOCOL §18.2); other instances do not re-check it. A crashed instance's states expire on the others by y-protocols' 30 s rule (measured about 34 s).
+- **Loop prevention:** the extension discards its own messages by instance identifier and does not republish changes that came from Redis. Tested with three instances: one edit produces a bounded number of messages and the count stops growing once all agree.
+- **It does not store changes that arrive from Redis** (D65) and **its optional lock** would make Redis a prerequisite for storing (D64). Both are handled in `ClusterSync`.
+- **It waits for a peer's answer when a document loads** (up to `COLLAB_CLUSTER_INITIAL_SYNC_TIMEOUT_MS`), which is how a document opened on a second instance receives changes the first has not stored yet (tested with a 30 s debounce).
+- **It delays unloading a document by one second** (`disconnectDelay`, so that last handshakes can finish); that delay is part of shutdown time.
+
+### 25.3 Flows
+
+**An edit on instance A, reader on instance B.** The client's update is applied on A, broadcast to A's clients, announced on the Redis channel of the document; B answers with its own state vector and A sends B the missing updates; B applies them (origin "redis"), broadcasts them to B's clients and schedules its own store. A stores after its debounce (one row). B's store finds the digest equal and returns after one read (D65).
+
+**Redis returns after an outage (the U13 procedure, D64).**
+1. Both Redis connections report ready again; the instance counts a recovery.
+2. For each open document the instance reads persisted state vectors in one query and compares them with the live ones. A document that lacks committed content (a missed message) is merged from PostgreSQL by `VersionService.catchUp`; this is counted as `staleDocumentsRepaired`.
+3. Documents that loaded during the outage are subscribed (the extension's own load hook is reused).
+4. Every open document's state vector is announced; peers answer with what this instance lacks and ask for what they lack. Edits made on both sides during the outage merge, because Yjs updates commute.
+5. The same procedure runs every `COLLAB_CLUSTER_RESYNC_INTERVAL_MS` (default 30 s) without any Redis event, which also repairs a lost message on a connection that never dropped (tested by unsubscribing one instance).
+
+**Instance failure.** The load balancer sends reconnecting clients to another instance; the document is loaded from PostgreSQL and the peer handshake adds what the other instance holds in memory. Clients re-send updates the server never confirmed. Committed content is never lost; uncommitted content survives only in other instances (thanks to D65, which stores it from there within one debounce) and in still-connected clients (G3).
+
+### 25.4 Failure modes added in Phase 9
+
+| Failure | What happens | Evidence |
+|---|---|---|
+| Redis unreachable while running | Cluster status becomes `degraded`, publishes are counted and dropped, clients keep editing on their own instance, stores continue; recovery runs on return | `cluster-failure.int.test.ts` |
+| Redis restarted with data discarded | Same; convergence about 1 s after Redis is back (PERFORMANCE §5) | benchmark `recovery-redis` |
+| Redis down at instance start | The instance starts after at most about 2 s of bounded waiting, serves from PostgreSQL and joins when Redis appears (this used to hang `start()`) | test |
+| Document opened during an outage | Served from PostgreSQL within the bounded wait; subscribed after recovery | test |
+| Shutdown while Redis is unreachable | Completes; the stores are flushed (this used to throw) | test |
+| A message lost on a live connection | Repaired by the periodic check within `COLLAB_CLUSTER_RESYNC_INTERVAL_MS` | test |
+| Instance killed (kill -9) | Clients reconnect elsewhere; presence of its users expires after about 34 s; a change that only it held is stored by a peer (D65) | tests, benchmark `recovery-instance` |
+| Instance killed and its only holder of a change is a closed browser tab | The change is lost, within the G3 window (stated, tested) | test |
+| Rolling restart, one instance at a time | Clients are told to leave, reconnect through the balancer; no typed edit was lost | test (4 clients, 65 edits, two restarts) |
+| Silent connection | Closed after `COLLAB_CONNECTION_TIMEOUT_MS` | test |
+| Per-instance connection limit | Refused on that instance only; the other instance has its own budget | test |
+
+### 25.5 Limits and open items
+
+- **Delete-only divergence** is not found by the PostgreSQL comparison (no clock moves); only the peer handshake carries it.
+- **Per-document load does not scale out** (D2): every instance with the document open handles all its changes (PERFORMANCE §2). Sticky routing is the future optimization.
+- **No refusal policy during an outage:** instances serve stale views of each other rather than refusing (D64 item 6).
+- **Tested with at most three instances and one core.** No network, no real balancer, no TLS, no real browsers (the owner checklist is in HANDOVER §14).
+- **A channel for an unloaded document may stay subscribed** if Redis was down at unload; it is dropped at the next recovery, and its messages are ignored meanwhile.
+- **Redis eviction and memory limits** were not tested; the channels carry no stored data, but rate-limit keys do (DEPLOYMENT §7).

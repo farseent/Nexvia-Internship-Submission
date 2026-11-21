@@ -1,0 +1,111 @@
+{
+  "scenario": "fanout",
+  "at": "2026-11-21T04:26:22.851Z",
+  "machine": {
+    "node": "v22.23.5",
+    "cpus": 1,
+    "memoryMb": 3992,
+    "postgres": "psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+    "redis": "Redis server v=7.0.15"
+  },
+  "results": [
+    {
+      "topology": "1 instance, cluster off",
+      "receivers": 30,
+      "changesPerSecond": 20,
+      "deliveryLatencyMs": {
+        "n": 9000,
+        "p50": 2.68,
+        "p95": 8.11,
+        "p99": 13.52,
+        "max": 19.49,
+        "mean": 3.52
+      },
+      "deliveriesExpected": 9000,
+      "deliveriesObserved": 9000,
+      "cpuPercentOfOneCore": [
+        3.3
+      ],
+      "rssMb": [
+        191.8
+      ],
+      "redisCommandsPerSecond": 0,
+      "redisKiloBytesPerSecond": 0.1
+    },
+    {
+      "topology": "1 instance, cluster on",
+      "receivers": 30,
+      "changesPerSecond": 20,
+      "deliveryLatencyMs": {
+        "n": 9000,
+        "p50": 2.66,
+        "p95": 6.01,
+        "p99": 8.98,
+        "max": 28.95,
+        "mean": 3.09
+      },
+      "deliveriesExpected": 9000,
+      "deliveriesObserved": 9000,
+      "cpuPercentOfOneCore": [
+        4.7
+      ],
+      "rssMb": [
+        192.2
+      ],
+      "redisCommandsPerSecond": 19,
+      "redisKiloBytesPerSecond": 6.1
+    },
+    {
+      "topology": "2 instances",
+      "receivers": 30,
+      "changesPerSecond": 20,
+      "deliveryLatencyMs": {
+        "n": 9000,
+        "p50": 4.49,
+        "p95": 10.12,
+        "p99": 22.72,
+        "max": 40.61,
+        "mean": 4.81
+      },
+      "deliveriesExpected": 9000,
+      "deliveriesObserved": 9000,
+      "cpuPercentOfOneCore": [
+        5.8,
+        4.4
+      ],
+      "rssMb": [
+        199,
+        193.4
+      ],
+      "redisCommandsPerSecond": 76,
+      "redisKiloBytesPerSecond": 24.6
+    },
+    {
+      "topology": "3 instances",
+      "receivers": 30,
+      "changesPerSecond": 20,
+      "deliveryLatencyMs": {
+        "n": 8960,
+        "p50": 6.73,
+        "p95": 17.45,
+        "p99": 43.56,
+        "max": 98.59,
+        "mean": 7.62
+      },
+      "deliveriesExpected": 9000,
+      "deliveriesObserved": 8960,
+      "cpuPercentOfOneCore": [
+        6.9,
+        4.7,
+        4.6
+      ],
+      "rssMb": [
+        160.5,
+        199.4,
+        148.9
+      ],
+      "redisCommandsPerSecond": 132,
+      "redisKiloBytesPerSecond": 43.7
+    }
+  ]
+}
